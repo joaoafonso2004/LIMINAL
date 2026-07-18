@@ -12,6 +12,7 @@ boot_splash/bg_color=Color(0, 0, 0, 1)
 
 LoadingScreen="*res://scripts/autoloads/loading_screen.gd"
 AudioManager="*res://scripts/autoloads/audio_manager.gd"
+Settings="*res://scripts/autoloads/settings.gd"
 GameManager="*res://scripts/autoloads/game_manager.gd"
 NetManager="*res://scripts/autoloads/net_manager.gd"
 TesanaWorldEditor="*res://addons/tesana_world_editor/scene_export.gd"

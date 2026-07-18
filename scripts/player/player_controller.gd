@@ -75,11 +75,14 @@ func _unhandled_input(event: InputEvent) -> void:
 	if frozen:
 		return
 
-	# Mouse-look only while captured.
+	# Mouse-look only while captured. User multiplier from the options menu.
 	if event is InputEventMouseMotion and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
 		var motion := event as InputEventMouseMotion
-		rotation.y -= motion.relative.x * mouse_sensitivity
-		camera.rotation.x -= motion.relative.y * mouse_sensitivity
+		var sens := mouse_sensitivity
+		if has_node("/root/Settings"):
+			sens *= Settings.mouse_sensitivity
+		rotation.y -= motion.relative.x * sens
+		camera.rotation.x -= motion.relative.y * sens
 		camera.rotation.x = clampf(camera.rotation.x, -1.4, 1.4)
 
 
