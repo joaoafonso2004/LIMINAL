@@ -1,0 +1,28 @@
+# Godot editor caches (regenerated on open)
+.godot/
+.godot_home/
+
+# Build artifacts (reproducible via export)
+web-export/
+.build_result.json
+
+# Self-QA rig artifacts (screenshots/logs per run) + transient probe scene
+.qa/
+_qa_probe/
+
+# Per-version session transcripts (v2 offset index + canonical sessions
+# bucket replace the old in-git copies; keeping them in git ballooned .git
+# and made commits time out — the root cause of the data-loss incident).
+.versions/*.jsonl
+
+# Desktop build output (distributed via GitHub Releases, not the repo)
+build/
+desktop-export/
+
+# Platform-internal session/state files — NEVER commit (may hold auth state)
+.tesana_storage_state.json
+.engine_turns.json
+
+# OS junk
+.DS_Store
+Thumbs.db

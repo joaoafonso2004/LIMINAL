@@ -1,0 +1,553 @@
+{
+  "version": 1,
+  "assets": {
+    "assets/ui/title_poster.webp": {
+      "tool": "mcp__game-assets__generate_2d_images_batch",
+      "primary_prompt": "endless yellow mono office Backrooms corridors under sick fluorescent light, damp carpet and stained ceiling tiles vanishing into fog, a half-seen distant human silhouette at a far corner that almost isn't there, First-Person Psychological Horror, oppressive liminal dread, empty and wrong, no gore no jumpscare energy, realistic, infinite yellow wallpaper corridors, fluorescent light haze, wet carpet path, distant vanishing figure, fog swallowing the hall, stained ceiling panels",
+      "raw_input": {
+        "type": "title_poster",
+        "gameName": "LIMINAL",
+        "theme": "endless yellow mono office Backrooms corridors under sick fluorescent light, damp carpet and stained ceiling tiles vanishing into fog, a half-seen distant human silhouette at a far corner that almost isn't there",
+        "genre": "First-Person Psychological Horror",
+        "style": "realistic",
+        "mood": "oppressive liminal dread, empty and wrong, no gore no jumpscare energy",
+        "elements": [
+          "infinite yellow wallpaper corridors",
+          "fluorescent light haze",
+          "wet carpet path",
+          "distant vanishing figure",
+          "fog swallowing the hall",
+          "stained ceiling panels"
+        ]
+      },
+      "tool_use_id": "call-24061df4-8427-4118-a058-74b0c1a410c5-3",
+      "updated_at": "2026-07-18T01:58:42.025559"
+    },
+    "assets/ui/loading_screen.png": {
+      "tool": "mcp__game-assets__generate_2d_images_batch",
+      "primary_prompt": "empty infinite yellow Backrooms hallway receding forever under buzzing fluorescent tubes, slightly disoriented depth, realistic",
+      "raw_input": {
+        "type": "loading_screen",
+        "gameName": "LIMINAL",
+        "theme": "empty infinite yellow Backrooms hallway receding forever under buzzing fluorescent tubes, slightly disoriented depth",
+        "style": "realistic",
+        "includeProgressBar": true
+      },
+      "tool_use_id": "call-24061df4-8427-4118-a058-74b0c1a410c5-3",
+      "updated_at": "2026-07-18T01:58:42.025559"
+    },
+    "assets/textures/backgrounds/menu_void_corridor.png": {
+      "tool": "mcp__game-assets__generate_2d_images_batch",
+      "primary_prompt": "dark empty mono-yellow office corridor in thick fog, lone fluorescent buzz, no people, liminal horror atmosphere, lonely dread, realistic, yellow wallpaper, damp carpet, ceiling fluorescent, distant corner turn",
+      "raw_input": {
+        "type": "background",
+        "name": "menu_void_corridor",
+        "theme": "dark empty mono-yellow office corridor in thick fog, lone fluorescent buzz, no people, liminal horror atmosphere",
+        "style": "realistic",
+        "mood": "lonely dread",
+        "perspective": "first-person",
+        "elements": [
+          "yellow wallpaper",
+          "damp carpet",
+          "ceiling fluorescent",
+          "distant corner turn"
+        ]
+      },
+      "tool_use_id": "call-24061df4-8427-4118-a058-74b0c1a410c5-3",
+      "updated_at": "2026-07-18T01:58:42.025559"
+    },
+    "assets/textures/walls/backrooms_yellow_wallpaper.png": {
+      "tool": "mcp__game-assets__generate_textures_batch",
+      "primary_prompt": "seamless classic Backrooms mono yellow wallpaper, slightly dirty, subtle water stains and mildew near base, matte office wallpaper texture, dull fluorescent-lit color, unsettling liminal aesthetic, no patterns that break tiling",
+      "raw_input": {
+        "name": "backrooms_yellow_wallpaper",
+        "prompt": "seamless classic Backrooms mono yellow wallpaper, slightly dirty, subtle water stains and mildew near base, matte office wallpaper texture, dull fluorescent-lit color, unsettling liminal aesthetic, no patterns that break tiling",
+        "category": "walls",
+        "style": "realistic",
+        "seamless": true,
+        "size": "1024"
+      },
+      "tool_use_id": "call-24061df4-8427-4118-a058-74b0c1a410c5-4",
+      "updated_at": "2026-07-18T01:59:42.718181"
+    },
+    "assets/textures/floors/backrooms_damp_carpet.png": {
+      "tool": "mcp__game-assets__generate_textures_batch",
+      "primary_prompt": "seamless stained moist office carpet in dirty yellow-beige, matted fibers, dark wet patches and grime, dim fluorescent lighting look, slightly moldy, liminal horror floor, tileable",
+      "raw_input": {
+        "name": "backrooms_damp_carpet",
+        "prompt": "seamless stained moist office carpet in dirty yellow-beige, matted fibers, dark wet patches and grime, dim fluorescent lighting look, slightly moldy, liminal horror floor, tileable",
+        "category": "floors",
+        "style": "realistic",
+        "seamless": true,
+        "size": "1024"
+      },
+      "tool_use_id": "call-24061df4-8427-4118-a058-74b0c1a410c5-4",
+      "updated_at": "2026-07-18T01:59:42.718181"
+    },
+    "assets/textures/surfaces/backrooms_ceiling_tiles.png": {
+      "tool": "mcp__game-assets__generate_textures_batch",
+      "primary_prompt": "seamless stained drop-ceiling acoustic tiles, dirty white-yellow, water damage brown rings, cracked panels, office institutional horror, tileable under fluorescent light",
+      "raw_input": {
+        "name": "backrooms_ceiling_tiles",
+        "prompt": "seamless stained drop-ceiling acoustic tiles, dirty white-yellow, water damage brown rings, cracked panels, office institutional horror, tileable under fluorescent light",
+        "category": "surfaces",
+        "style": "realistic",
+        "seamless": true,
+        "size": "1024"
+      },
+      "tool_use_id": "call-24061df4-8427-4118-a058-74b0c1a410c5-4",
+      "updated_at": "2026-07-18T01:59:42.718181"
+    },
+    "assets/textures/floors/backrooms_linoleum.png": {
+      "tool": "mcp__game-assets__generate_textures_batch",
+      "primary_prompt": "seamless worn yellowish institutional linoleum floor, scuffed, with faint darker stains and seams, fluorescent-lit Backrooms secondary room floor, tileable",
+      "raw_input": {
+        "name": "backrooms_linoleum",
+        "prompt": "seamless worn yellowish institutional linoleum floor, scuffed, with faint darker stains and seams, fluorescent-lit Backrooms secondary room floor, tileable",
+        "category": "floors",
+        "style": "realistic",
+        "seamless": true,
+        "size": "1024"
+      },
+      "tool_use_id": "call-24061df4-8427-4118-a058-74b0c1a410c5-4",
+      "updated_at": "2026-07-18T01:59:42.718181"
+    },
+    "assets/environment/interiors/yellow_corridor_segment.glb": {
+      "tool": "mcp__game-3d-models__generate_environment_batch",
+      "primary_prompt": "modular straight Backrooms corridor segment, mono yellow wallpaper walls, damp stained carpet floor, dirty fluorescent drop ceiling with two hanging tube lights, open ends for tiling into maze, empty no furniture, realistic dirty liminal office aesthetic, game-ready scale approx 4m long 3m wide 3m tall",
+      "raw_input": {
+        "name": "yellow_corridor_segment",
+        "prompt": "modular straight Backrooms corridor segment, mono yellow wallpaper walls, damp stained carpet floor, dirty fluorescent drop ceiling with two hanging tube lights, open ends for tiling into maze, empty no furniture, realistic dirty liminal office aesthetic, game-ready scale approx 4m long 3m wide 3m tall",
+        "category": "interiors",
+        "style": "realistic"
+      },
+      "tool_use_id": "call-24061df4-8427-4118-a058-74b0c1a410c5-5",
+      "updated_at": "2026-07-18T02:01:47.067323"
+    },
+    "assets/environment/interiors/yellow_corner_l.glb": {
+      "tool": "mcp__game-3d-models__generate_environment_batch",
+      "primary_prompt": "Backrooms L-shaped corridor corner break, mono yellow wallpaper, damp carpet, fluorescent lockdown ceiling, empty liminal horror interior piece for maze, realistic dirty office style",
+      "raw_input": {
+        "name": "yellow_corner_l",
+        "prompt": "Backrooms L-shaped corridor corner break, mono yellow wallpaper, damp carpet, fluorescent lockdown ceiling, empty liminal horror interior piece for maze, realistic dirty office style",
+        "category": "interiors",
+        "style": "realistic"
+      },
+      "tool_use_id": "call-24061df4-8427-4118-a058-74b0c1a410c5-5",
+      "updated_at": "2026-07-18T02:01:47.067323"
+    },
+    "assets/environment/interiors/yellow_room_deadend.glb": {
+      "tool": "mcp__game-3d-models__generate_environment_batch",
+      "primary_prompt": "small empty square Backrooms room dead-end with mono yellow walls, damp carpet, one fluorescent ceiling light, maybe a blank doorway opening, oppressive empty office alcove, realistic liminal style",
+      "raw_input": {
+        "name": "yellow_room_deadend",
+        "prompt": "small empty square Backrooms room dead-end with mono yellow walls, damp carpet, one fluorescent ceiling light, maybe a blank doorway opening, oppressive empty office alcove, realistic liminal style",
+        "category": "interiors",
+        "style": "realistic"
+      },
+      "tool_use_id": "call-24061df4-8427-4118-a058-74b0c1a410c5-5",
+      "updated_at": "2026-07-18T02:01:47.067323"
+    },
+    "assets/props/decorations/fluorescent_tube_fixture.glb": {
+      "tool": "mcp__game-3d-models__generate_props_batch",
+      "primary_prompt": "single long industrial fluorescent tube light fixture with metal housing, slightly dirty yellowed plastic diffuser, hanging drop-ceiling style Backrooms light, realistic",
+      "raw_input": {
+        "name": "fluorescent_tube_fixture",
+        "category": "decorations",
+        "prompt": "single long industrial fluorescent tube light fixture with metal housing, slightly dirty yellowed plastic diffuser, hanging drop-ceiling style Backrooms light, realistic",
+        "style": "realistic"
+      },
+      "tool_use_id": "call-24061df4-8427-4118-a058-74b0c1a410c5-6",
+      "updated_at": "2026-07-18T02:03:26.088656"
+    },
+    "assets/props/decorations/wet_floor_sign.glb": {
+      "tool": "mcp__game-3d-models__generate_props_batch",
+      "primary_prompt": "yellow plastic wet floor caution A-frame sign alone, slightly dirty, institutional, Backrooms vibe object, realistic",
+      "raw_input": {
+        "name": "wet_floor_sign",
+        "category": "decorations",
+        "prompt": "yellow plastic wet floor caution A-frame sign alone, slightly dirty, institutional, Backrooms vibe object, realistic",
+        "style": "realistic"
+      },
+      "tool_use_id": "call-24061df4-8427-4118-a058-74b0c1a410c5-6",
+      "updated_at": "2026-07-18T02:03:26.088656"
+    },
+    "assets/props/furniture/broken_office_chair.glb": {
+      "tool": "mcp__game-3d-models__generate_props_batch",
+      "primary_prompt": "broken wheeled office chair alone, missing a wheel, fabric seat stained yellow-gray, abandoned liminal office prop, realistic empty horror vibe",
+      "raw_input": {
+        "name": "broken_office_chair",
+        "category": "furniture",
+        "prompt": "broken wheeled office chair alone, missing a wheel, fabric seat stained yellow-gray, abandoned liminal office prop, realistic empty horror vibe",
+        "style": "realistic"
+      },
+      "tool_use_id": "call-24061df4-8427-4118-a058-74b0c1a410c5-6",
+      "updated_at": "2026-07-18T02:03:26.088656"
+    },
+    "assets/props/decorations/exit_sign_hanging.glb": {
+      "tool": "mcp__game-3d-models__generate_props_batch",
+      "primary_prompt": "vintage green illuminated EXIT sign hanging from metal chain for drop ceiling, slightly flickering cracked plastic, unreal hope, realistic institutional horror",
+      "raw_input": {
+        "name": "exit_sign_hanging",
+        "category": "decorations",
+        "prompt": "vintage green illuminated EXIT sign hanging from metal chain for drop ceiling, slightly flickering cracked plastic, unreal hope, realistic institutional horror",
+        "style": "realistic"
+      },
+      "tool_use_id": "call-24061df4-8427-4118-a058-74b0c1a410c5-6",
+      "updated_at": "2026-07-18T02:03:26.088656"
+    },
+    "assets/characters/watcher_silhouette/watcher_silhouette.glb": {
+      "tool": "mcp__game-3d-models__generate_characters_batch",
+      "primary_prompt": "Full body T-pose human silhouette figure, completely matte pure black matte void body with no facial features, no clothing details, featureless shadow humanoid, slightly wrong proportions (a bit too tall and thin), liminal horror stalking figure meant to be seen only as distant silhouette, head to toe complete silhouette, standing upright arms out T-pose for rigging",
+      "raw_input": {
+        "name": "watcher_silhouette",
+        "prompt": "Full body T-pose human silhouette figure, completely matte pure black matte void body with no facial features, no clothing details, featureless shadow humanoid, slightly wrong proportions (a bit too tall and thin), liminal horror stalking figure meant to be seen only as distant silhouette, head to toe complete silhouette, standing upright arms out T-pose for rigging",
+        "style": "stylized"
+      },
+      "tool_use_id": "call-24061df4-8427-4118-a058-74b0c1a410c5-7",
+      "updated_at": "2026-07-18T02:04:24.591852"
+    },
+    "assets/audio/ambient/ambient_backrooms_office_fluorescent_hum_loop.mp3": {
+      "tool": "mcp__game-audio__generate_audio_batch",
+      "primary_prompt": "constant low electrical fluorescent light buzz and hum with faint fluorescent ballast whine in empty yellow office building, oppressive looping room tone, no music no voices",
+      "raw_input": {
+        "type": "ambient",
+        "name": "fluorescent_hum_loop",
+        "environment": "backrooms_office",
+        "description": "constant low electrical fluorescent light buzz and hum with faint fluorescent ballast whine in empty yellow office building, oppressive looping room tone, no music no voices",
+        "duration": 20
+      },
+      "tool_use_id": "call-24061df4-8427-4118-a058-74b0c1a410c5-8",
+      "updated_at": "2026-07-18T02:04:35.610844"
+    },
+    "assets/audio/music/music_exploration_liminal_dread_theme.mp3": {
+      "tool": "mcp__game-audio__generate_audio_batch",
+      "primary_prompt": "dark ambient drone, sparse distant piano tones, film-score psychological horror, creeping lived-in dread, empty and wrong, not jump-scare tense, very slow 50 BPM, almost arrhythmic",
+      "raw_input": {
+        "type": "music",
+        "name": "liminal_dread_theme",
+        "gameState": "exploration",
+        "style": "dark ambient drone, sparse distant piano tones, film-score psychological horror",
+        "mood": "creeping lived-in dread, empty and wrong, not jump-scare tense",
+        "tempo": "very slow 50 BPM, almost arrhythmic",
+        "instruments": "low synth pads, distant reverb piano, sub bass drone, faint tape hiss",
+        "durationSeconds": 45
+      },
+      "tool_use_id": "call-24061df4-8427-4118-a058-74b0c1a410c5-8",
+      "updated_at": "2026-07-18T02:04:35.610844"
+    },
+    "assets/audio/sfx/environment/environment_distant_footsteps_echo.mp3": {
+      "tool": "mcp__game-audio__generate_audio_batch",
+      "primary_prompt": "faraway muted footsteps on wet carpet echoing down a long corridor, then stopping suddenly, spatial distance feeling, no vocalization",
+      "raw_input": {
+        "type": "sfx",
+        "name": "distant_footsteps_echo",
+        "category": "environment",
+        "description": "faraway muted footsteps on wet carpet echoing down a long corridor, then stopping suddenly, spatial distance feeling, no vocalization",
+        "duration": 4
+      },
+      "tool_use_id": "call-24061df4-8427-4118-a058-74b0c1a410c5-8",
+      "updated_at": "2026-07-18T02:04:35.610844"
+    },
+    "assets/audio/sfx/environment/environment_hallway_rearrange_creak.mp3": {
+      "tool": "mcp__game-audio__generate_audio_batch",
+      "primary_prompt": "subtle low architectural creak and soft carpet scrape as if a wall shifted far behind you, unsettling but not a shock, muted",
+      "raw_input": {
+        "type": "sfx",
+        "name": "hallway_rearrange_creak",
+        "category": "environment",
+        "description": "subtle low architectural creak and soft carpet scrape as if a wall shifted far behind you, unsettling but not a shock, muted",
+        "duration": 2.5
+      },
+      "tool_use_id": "call-24061df4-8427-4118-a058-74b0c1a410c5-8",
+      "updated_at": "2026-07-18T02:04:35.610844"
+    },
+    "assets/audio/sfx/enemy/enemy_jumpscare_scream.mp3": {
+      "tool": "mcp__game-audio__generate_audio_batch",
+      "primary_prompt": "single very short dry sharp human-ish shriek, harsh and sudden, cutting off instantly, distorted, no music, dread, under 1 second",
+      "raw_input": {
+        "type": "sfx",
+        "name": "jumpscare_scream",
+        "category": "enemy",
+        "description": "single very short dry sharp human-ish shriek, harsh and sudden, cutting off instantly, distorted, no music, dread, under 1 second",
+        "duration": 1
+      },
+      "tool_use_id": "toolu_01AsTvUxgHDr7zGPE68HVz8V",
+      "updated_at": "2026-07-18T02:10:06.640598"
+    },
+    "assets/audio/sfx/enemy/enemy_chase_distorted_scream.mp3": {
+      "tool": "mcp__game-audio__generate_audio_batch",
+      "primary_prompt": "distorted rising inhuman screech and roar building in intensity, layered garbled voices, panic-inducing pursuit sound, growing louder",
+      "raw_input": {
+        "type": "sfx",
+        "name": "chase_distorted_scream",
+        "category": "enemy",
+        "description": "distorted rising inhuman screech and roar building in intensity, layered garbled voices, panic-inducing pursuit sound, growing louder",
+        "duration": 8
+      },
+      "tool_use_id": "toolu_01AsTvUxgHDr7zGPE68HVz8V",
+      "updated_at": "2026-07-18T02:10:06.640598"
+    },
+    "assets/audio/sfx/enemy/enemy_entity_heavy_steps.mp3": {
+      "tool": "mcp__game-audio__generate_audio_batch",
+      "primary_prompt": "fast heavy pounding footsteps running on carpet, thumping rhythmic chase pursuit, wet muffled impacts, loopable",
+      "raw_input": {
+        "type": "sfx",
+        "name": "entity_heavy_steps",
+        "category": "enemy",
+        "description": "fast heavy pounding footsteps running on carpet, thumping rhythmic chase pursuit, wet muffled impacts, loopable",
+        "duration": 3
+      },
+      "tool_use_id": "toolu_01AsTvUxgHDr7zGPE68HVz8V",
+      "updated_at": "2026-07-18T02:10:06.640598"
+    },
+    "assets/audio/sfx/environment/environment_phone_ring_twice.mp3": {
+      "tool": "mcp__game-audio__generate_audio_batch",
+      "primary_prompt": "old office desk telephone ringing twice then stopping abruptly, distant and lonely, reverberant empty hallway",
+      "raw_input": {
+        "type": "sfx",
+        "name": "phone_ring_twice",
+        "category": "environment",
+        "description": "old office desk telephone ringing twice then stopping abruptly, distant and lonely, reverberant empty hallway",
+        "duration": 4
+      },
+      "tool_use_id": "toolu_01AsTvUxgHDr7zGPE68HVz8V",
+      "updated_at": "2026-07-18T02:10:06.640598"
+    },
+    "assets/audio/sfx/environment/environment_distant_door_slam.mp3": {
+      "tool": "mcp__game-audio__generate_audio_batch",
+      "primary_prompt": "a single distant heavy door slamming shut far away down an empty corridor, echoing, muffled",
+      "raw_input": {
+        "type": "sfx",
+        "name": "distant_door_slam",
+        "category": "environment",
+        "description": "a single distant heavy door slamming shut far away down an empty corridor, echoing, muffled",
+        "duration": 2.5
+      },
+      "tool_use_id": "toolu_01AsTvUxgHDr7zGPE68HVz8V",
+      "updated_at": "2026-07-18T02:10:06.640598"
+    },
+    "assets/audio/sfx/environment/environment_ceiling_drag.mp3": {
+      "tool": "mcp__game-audio__generate_audio_batch",
+      "primary_prompt": "something heavy dragging and scraping slowly across a ceiling directly overhead, unsettling wet scrape, unexplained",
+      "raw_input": {
+        "type": "sfx",
+        "name": "ceiling_drag",
+        "category": "environment",
+        "description": "something heavy dragging and scraping slowly across a ceiling directly overhead, unsettling wet scrape, unexplained",
+        "duration": 4
+      },
+      "tool_use_id": "toolu_01AsTvUxgHDr7zGPE68HVz8V",
+      "updated_at": "2026-07-18T02:10:06.640598"
+    },
+    "assets/audio/sfx/enemy/enemy_close_breath.mp3": {
+      "tool": "mcp__game-audio__generate_audio_batch",
+      "primary_prompt": "a single very close raspy human exhale breath right next to your ear, intimate and wrong, 2 seconds, no words",
+      "raw_input": {
+        "type": "sfx",
+        "name": "close_breath",
+        "category": "enemy",
+        "description": "a single very close raspy human exhale breath right next to your ear, intimate and wrong, 2 seconds, no words",
+        "duration": 2
+      },
+      "tool_use_id": "toolu_01AsTvUxgHDr7zGPE68HVz8V",
+      "updated_at": "2026-07-18T02:10:06.640598"
+    },
+    "assets/audio/sfx/environment/environment_light_flicker_buzz.mp3": {
+      "tool": "mcp__game-audio__generate_audio_batch",
+      "primary_prompt": "fluorescent light electrical buzz zap and flicker crackle, an unstable tube stuttering, short",
+      "raw_input": {
+        "type": "sfx",
+        "name": "light_flicker_buzz",
+        "category": "environment",
+        "description": "fluorescent light electrical buzz zap and flicker crackle, an unstable tube stuttering, short",
+        "duration": 1.5
+      },
+      "tool_use_id": "toolu_01AsTvUxgHDr7zGPE68HVz8V",
+      "updated_at": "2026-07-18T02:10:06.640598"
+    },
+    "assets/audio/sfx/player/player_player_step_carpet.mp3": {
+      "tool": "mcp__game-audio__generate_audio_batch",
+      "primary_prompt": "a single soft muffled footstep on damp office carpet, dull, close, dry",
+      "raw_input": {
+        "type": "sfx",
+        "name": "player_step_carpet",
+        "category": "player",
+        "description": "a single soft muffled footstep on damp office carpet, dull, close, dry",
+        "duration": 1
+      },
+      "tool_use_id": "toolu_01AsTvUxgHDr7zGPE68HVz8V",
+      "updated_at": "2026-07-18T02:10:06.640598"
+    },
+    "assets/audio/ambient/ambient_empty_building_hvac_drone_loop.mp3": {
+      "tool": "mcp__game-audio__generate_audio_batch",
+      "primary_prompt": "distant air conditioning HVAC rumble drone, very low continuous mechanical hum of an empty office building, no music",
+      "raw_input": {
+        "type": "ambient",
+        "name": "hvac_drone_loop",
+        "environment": "empty_building",
+        "description": "distant air conditioning HVAC rumble drone, very low continuous mechanical hum of an empty office building, no music",
+        "duration": 20
+      },
+      "tool_use_id": "toolu_01AsTvUxgHDr7zGPE68HVz8V",
+      "updated_at": "2026-07-18T02:10:06.640598"
+    },
+    "assets/audio/music/music_climax_final_exit_drone.mp3": {
+      "tool": "mcp__game-audio__generate_audio_batch",
+      "primary_prompt": "single continuous low bass drone note slowly swelling and rising in volume and tension, dark ambient, inevitable dread reaching a threshold, static, no rhythm",
+      "raw_input": {
+        "type": "music",
+        "name": "final_exit_drone",
+        "gameState": "climax",
+        "style": "single continuous low bass drone note slowly swelling and rising in volume and tension, dark ambient",
+        "mood": "inevitable dread reaching a threshold",
+        "tempo": "static, no rhythm",
+        "instruments": "deep sub bass drone, low cello swell, faint high metallic overtone",
+        "durationSeconds": 60
+      },
+      "tool_use_id": "toolu_01AsTvUxgHDr7zGPE68HVz8V",
+      "updated_at": "2026-07-18T02:10:06.640598"
+    },
+    "assets/props/decorations/exit_door_real.glb": {
+      "tool": "mcp__game-3d-models__generate_props_batch",
+      "primary_prompt": "a single heavy pale steel emergency door set in a plain frame, standing closed, clean and different from dirty surroundings, subtle green EXIT glow above, the one real way out, realistic, isolated object",
+      "raw_input": {
+        "name": "exit_door_real",
+        "category": "decorations",
+        "prompt": "a single heavy pale steel emergency door set in a plain frame, standing closed, clean and different from dirty surroundings, subtle green EXIT glow above, the one real way out, realistic, isolated object",
+        "style": "realistic"
+      },
+      "tool_use_id": "toolu_01D5czQ8UUx5XbTkmeKgVjnh",
+      "updated_at": "2026-07-18T02:11:45.312588"
+    },
+    "assets/props/decorations/office_door_closed.glb": {
+      "tool": "mcp__game-3d-models__generate_props_batch",
+      "primary_prompt": "a plain closed institutional office door in a simple frame, dirty beige, brushed metal handle, matches Backrooms wallpaper, isolated single object, realistic",
+      "raw_input": {
+        "name": "office_door_closed",
+        "category": "decorations",
+        "prompt": "a plain closed institutional office door in a simple frame, dirty beige, brushed metal handle, matches Backrooms wallpaper, isolated single object, realistic",
+        "style": "realistic"
+      },
+      "tool_use_id": "toolu_01D5czQ8UUx5XbTkmeKgVjnh",
+      "updated_at": "2026-07-18T02:11:45.312588"
+    },
+    "assets/props/decorations/desk_phone_offhook.glb": {
+      "tool": "mcp__game-3d-models__generate_props_batch",
+      "primary_prompt": "old beige office desk telephone with the handset off the hook lying beside it, coiled cord, slightly dirty, isolated single object, realistic anomaly prop",
+      "raw_input": {
+        "name": "desk_phone_offhook",
+        "category": "decorations",
+        "prompt": "old beige office desk telephone with the handset off the hook lying beside it, coiled cord, slightly dirty, isolated single object, realistic anomaly prop",
+        "style": "realistic"
+      },
+      "tool_use_id": "toolu_01D5czQ8UUx5XbTkmeKgVjnh",
+      "updated_at": "2026-07-18T02:11:45.312588"
+    },
+    "assets/ui/wordmark_title.png": {
+      "tool": "mcp__game-assets__generate_ui_kit",
+      "primary_prompt": "LIMINAL \u2014 liminal backrooms psychological horror, dirty fluorescent yellow and burnt white on grimy dark institutional office backdrop, subtle film grain and vignette, minimal oppressive, distressed edges, no red no blood",
+      "raw_input": {
+        "element": {
+          "id": "wordmark_title",
+          "type": "wordmark",
+          "label": "LIMINAL",
+          "size": {
+            "width": 900,
+            "height": 300
+          },
+          "aspect": "wide_3_1"
+        },
+        "kit_styleBrief": "liminal backrooms psychological horror, dirty fluorescent yellow and burnt white on grimy dark institutional office backdrop, subtle film grain and vignette, minimal oppressive, distressed edges, no red no blood"
+      },
+      "tool_use_id": "toolu_01UjEKcbwdZhGPEmvtdshXa7",
+      "updated_at": "2026-07-18T02:12:29.743711"
+    },
+    "assets/ui/btn_main.png": {
+      "tool": "mcp__game-assets__generate_ui_kit",
+      "primary_prompt": "ENTER \u2014 liminal backrooms psychological horror, dirty fluorescent yellow and burnt white on grimy dark institutional office backdrop, subtle film grain and vignette, minimal oppressive, distressed edges, no red no blood",
+      "raw_input": {
+        "element": {
+          "id": "btn_main",
+          "type": "button_9slice",
+          "label": "ENTER",
+          "size": {
+            "width": 288,
+            "height": 96
+          },
+          "aspect": "wide_3_1"
+        },
+        "kit_styleBrief": "liminal backrooms psychological horror, dirty fluorescent yellow and burnt white on grimy dark institutional office backdrop, subtle film grain and vignette, minimal oppressive, distressed edges, no red no blood"
+      },
+      "tool_use_id": "toolu_01UjEKcbwdZhGPEmvtdshXa7",
+      "updated_at": "2026-07-18T02:12:29.743711"
+    },
+    "assets/ui/panel_main.png": {
+      "tool": "mcp__game-assets__generate_ui_kit",
+      "primary_prompt": "liminal backrooms psychological horror, dirty fluorescent yellow and burnt white on grimy dark institutional office backdrop, subtle film grain and vignette, minimal oppressive, distressed edges, no red no blood",
+      "raw_input": {
+        "element": {
+          "id": "panel_main",
+          "type": "panel_9slice",
+          "size": {
+            "width": 480,
+            "height": 360
+          },
+          "aspect": "landscape_4_3"
+        },
+        "kit_styleBrief": "liminal backrooms psychological horror, dirty fluorescent yellow and burnt white on grimy dark institutional office backdrop, subtle film grain and vignette, minimal oppressive, distressed edges, no red no blood"
+      },
+      "tool_use_id": "toolu_01UjEKcbwdZhGPEmvtdshXa7",
+      "updated_at": "2026-07-18T02:12:29.743711"
+    },
+    "assets/characters/survivor_body/survivor_body.glb": {
+      "tool": "mcp__game-3d-models__generate_characters_batch",
+      "primary_prompt": "Full body T-pose ordinary man in a dirty rumpled office shirt and trousers, plain everyday survivor trapped in the backrooms, tired, no weapons, muted worn clothing, complete silhouette head to toe, standing upright arms out in T-pose for rigging",
+      "raw_input": {
+        "name": "survivor_body",
+        "prompt": "Full body T-pose ordinary man in a dirty rumpled office shirt and trousers, plain everyday survivor trapped in the backrooms, tired, no weapons, muted worn clothing, complete silhouette head to toe, standing upright arms out in T-pose for rigging",
+        "style": "realistic"
+      },
+      "tool_use_id": "toolu_019niNU7JDnv9P3WH8EpHsRd",
+      "updated_at": "2026-07-18T02:51:28.369324"
+    },
+    "assets/props/items/snus_box.glb": {
+      "tool": "mcp__game-3d-models__generate_props_batch",
+      "primary_prompt": "a single small round snus tobacco tin can, cylindrical pocket-sized container like a hockey-puck shaped small can, slightly worn matte lid with a subtle plain label, isolated single object on nothing, realistic",
+      "raw_input": {
+        "name": "snus_box",
+        "category": "items",
+        "prompt": "a single small round snus tobacco tin can, cylindrical pocket-sized container like a hockey-puck shaped small can, slightly worn matte lid with a subtle plain label, isolated single object on nothing, realistic",
+        "style": "realistic"
+      },
+      "tool_use_id": "toolu_01JmQsXFcYhcpZZeB6io5gfs",
+      "updated_at": "2026-07-18T02:57:22.596968"
+    },
+    "assets/audio/sfx/pickup/pickup_snus_pickup.mp3": {
+      "tool": "mcp__game-audio__generate_audio_batch",
+      "primary_prompt": "a small dry click and soft rattle of picking up a little tobacco tin can, quiet, close, satisfying but understated",
+      "raw_input": {
+        "type": "sfx",
+        "name": "snus_pickup",
+        "category": "pickup",
+        "description": "a small dry click and soft rattle of picking up a little tobacco tin can, quiet, close, satisfying but understated",
+        "duration": 1
+      },
+      "tool_use_id": "toolu_01RZhPcPvr5HfaJTBbFBqpey",
+      "updated_at": "2026-07-18T02:57:33.401425"
+    },
+    "assets/audio/sfx/pickup/pickup_escape_unlocked.mp3": {
+      "tool": "mcp__game-audio__generate_audio_batch",
+      "primary_prompt": "a low resonant unsettling tone with a faint mechanical unlock click, signalling a way out has opened, dread-tinged relief, no music",
+      "raw_input": {
+        "type": "sfx",
+        "name": "escape_unlocked",
+        "category": "pickup",
+        "description": "a low resonant unsettling tone with a faint mechanical unlock click, signalling a way out has opened, dread-tinged relief, no music",
+        "duration": 3
+      },
+      "tool_use_id": "toolu_01RZhPcPvr5HfaJTBbFBqpey",
+      "updated_at": "2026-07-18T02:57:33.401425"
+    }
+  }
+}
