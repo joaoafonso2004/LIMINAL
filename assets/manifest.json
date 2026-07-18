@@ -1,0 +1,69 @@
+{
+  "characters": {
+    "watcher_silhouette": {
+      "baseModel": "/var/games/game-20260718-492248f9/assets/characters/watcher_silhouette/watcher_silhouette.glb",
+      "rigTaskId": "library:c0405c63e5bedefabd435198e45c6b2b179da67fe294787d819a0a5c9a217760",
+      "animations": {
+        "ual1_Idle": "/var/games/game-20260718-492248f9/assets/characters/watcher_silhouette/watcher_silhouette_animations.tres",
+        "ual1_Walk": "/var/games/game-20260718-492248f9/assets/characters/watcher_silhouette/watcher_silhouette_animations.tres",
+        "ual1_Sprint": "/var/games/game-20260718-492248f9/assets/characters/watcher_silhouette/watcher_silhouette_animations.tres"
+      }
+    },
+    "survivor_body": {
+      "baseModel": "/var/games/game-20260718-492248f9/assets/characters/survivor_body/survivor_body.glb",
+      "rigTaskId": "library:fd930a658c66515dd4a3638bc624fbf79a197113eb28e23dc9cdd1c4212e9216",
+      "animations": {
+        "ual1_Idle": "/var/games/game-20260718-492248f9/assets/characters/survivor_body/survivor_body_animations.tres",
+        "ual1_Walk": "/var/games/game-20260718-492248f9/assets/characters/survivor_body/survivor_body_animations.tres"
+      }
+    }
+  },
+  "props": {
+    "fluorescent_tube_fixture": {
+      "model": "/var/games/game-20260718-492248f9/assets/props/decorations/fluorescent_tube_fixture.glb",
+      "taskId": "library:a4ab5d0fbcd0f8caa4c5eb7e66b0fdf0480fe6f973e021de9abaa499a8b5b36f"
+    },
+    "broken_office_chair": {
+      "model": "/var/games/game-20260718-492248f9/assets/props/furniture/broken_office_chair.glb",
+      "taskId": "library:64952cd187c718d367ba3dc6dc2a06a15ef88de7d98cb6444bc49fe2d2131b42"
+    },
+    "exit_sign_hanging": {
+      "model": "/var/games/game-20260718-492248f9/assets/props/decorations/exit_sign_hanging.glb",
+      "taskId": "library:392a2f84405cba2f19e4cad0103c7a2925669e69cf482202a07365b42c301013"
+    },
+    "wet_floor_sign": {
+      "model": "/var/games/game-20260718-492248f9/assets/props/decorations/wet_floor_sign.glb",
+      "taskId": "e304cabf-3663-4907-82c2-f37732e41ffb"
+    },
+    "desk_phone_offhook": {
+      "model": "/var/games/game-20260718-492248f9/assets/props/decorations/desk_phone_offhook.glb",
+      "taskId": "library:d237bb23f9527e3abc331ea9617b9c236dcfa7b6fe0b6fb9438fd078c7c8fc85"
+    },
+    "exit_door_real": {
+      "model": "/var/games/game-20260718-492248f9/assets/props/decorations/exit_door_real.glb",
+      "taskId": "library:a36f923ad34d382708b044510003ac948f7a1e4e0fcad6f6db17161b38dbabca"
+    },
+    "office_door_closed": {
+      "model": "/var/games/game-20260718-492248f9/assets/props/decorations/office_door_closed.glb",
+      "taskId": "9537d7f4-bad3-492f-9065-433e77a3eb82"
+    },
+    "snus_box": {
+      "model": "/var/games/game-20260718-492248f9/assets/props/items/snus_box.glb",
+      "taskId": "9d54cd53-136d-4cf2-9faa-7703c759346e"
+    }
+  },
+  "environment": {
+    "yellow_corner_l": {
+      "model": "/var/games/game-20260718-492248f9/assets/environment/interiors/yellow_corner_l.glb",
+      "taskId": "library:e84cd2b14e9a17fb3237577a53d6ac725929e787c84ed52a9b238f93c9889db7"
+    },
+    "yellow_room_deadend": {
+      "model": "/var/games/game-20260718-492248f9/assets/environment/interiors/yellow_room_deadend.glb",
+      "taskId": "dcadbfb0-1b0e-4bb7-8616-c78d777d3611"
+    },
+    "yellow_corridor_segment": {
+      "model": "/var/games/game-20260718-492248f9/assets/environment/interiors/yellow_corridor_segment.glb",
+      "taskId": "6b36656f-d587-480b-a451-f8fe691860ed"
+    }
+  }
+}
