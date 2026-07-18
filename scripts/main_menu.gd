@@ -21,6 +21,7 @@ var _wordmark: TextureRect = null
 
 var _main_col: VBoxContainer = null
 var _mp_col: VBoxContainer = null
+var _options: Control = null
 var _status: Label = null
 
 
@@ -128,6 +129,10 @@ func _build_main_column() -> void:
 	coop.pressed.connect(_on_show_mp)
 	_main_col.add_child(coop)
 
+	var options := _make_art_button("OPTIONS")
+	options.pressed.connect(_on_show_options)
+	_main_col.add_child(options)
+
 
 func _build_mp_column() -> void:
 	_mp_col = _column()
@@ -211,6 +216,18 @@ func _on_show_mp() -> void:
 		return
 	_main_col.visible = false
 	_mp_col.visible = true
+
+
+func _on_show_options() -> void:
+	if _options == null:
+		_options = load("res://scripts/ui/options_panel.gd").new()
+		add_child(_options)
+		_options.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		_options.closed.connect(func():
+			_options.visible = false
+			_main_col.visible = true)
+	_main_col.visible = false
+	_options.visible = true
 
 
 func _on_mp_back() -> void:
