@@ -437,6 +437,10 @@ func _on_net_message(type: String, msg: Dictionary, from_player: int) -> void:
 			if int(msg.get("target", -1)) == NetManager.local_player_id \
 					and _entity and _entity.has_method("remote_scare"):
 				_entity.remote_scare(str(msg.get("kind", "peek")))
+		"scare_all":
+			# Simultaneous scare triggered for all players (jumpscare)
+			if _entity and _entity.has_method("remote_scare"):
+				_entity.remote_scare(str(msg.get("kind", "jump")))
 		"fig":
 			# A teammate's scare is live — render the same entity here.
 			if _entity and _entity.has_method("mirror_update"):
