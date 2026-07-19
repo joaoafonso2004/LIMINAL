@@ -547,7 +547,7 @@ func _tick_peek(delta: float) -> void:
 			_end_apparition()
 			return
 		if _stare_timer < 0.0:
-			_stare_timer = _rng.randf_range(0.5, 1.2)
+			_stare_timer = _rng.randf_range(0.18, 0.35)
 			_stare_breath(flat.length())
 			_add_stress(0.12)
 		if _stare_timer > 0.0:

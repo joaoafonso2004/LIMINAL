@@ -290,8 +290,9 @@ func _spawn_fp_body() -> void:
 	# Scale and ground the character
 	ModelUtils.setup_character_for_movement(model, 1.8)
 	
-	# Center the character model relative to the camera
-	_mesh_root.position = Vector3(0, 0, 0)
+	# Offset the body mesh backward so that when looking down, the camera looks 
+	# in front of the hips/waist instead of directly down the hollow cylinder opening!
+	_mesh_root.position = Vector3(0, 0, 0.18)
 	
 	# Guard against dark mesh from missing normals
 	var meshes := model.find_children("*", "MeshInstance3D")

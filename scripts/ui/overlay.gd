@@ -185,7 +185,7 @@ func trigger_jumpscare() -> void:
 	var vp_size := get_viewport().get_visible_rect().size
 	_jumpscare.pivot_offset = vp_size / 2.0
 	
-	_jumpscare.scale = Vector3(0.7, 0.7, 1.0)
+	_jumpscare.scale = Vector2(0.7, 0.7)
 	_jumpscare.modulate = Color(1.0, 1.0, 1.0, 1.0)
 	_jumpscare.visible = true
 	_jumpscare.position = Vector2.ZERO
@@ -195,7 +195,7 @@ func trigger_jumpscare() -> void:
 	
 	var tw := create_tween()
 	tw.set_parallel(true)
-	tw.tween_property(_jumpscare, "scale", Vector3(1.3, 1.3, 1.0), 0.3).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	tw.tween_property(_jumpscare, "scale", Vector2(1.3, 1.3), 0.3).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
 	tw.tween_property(_jumpscare, "modulate", Color(1.3, 0.1, 0.1, 1.0), 0.2)
 	
 	# Add a violent high-frequency shake to simulate a frantic attack twitch
