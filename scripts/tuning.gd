@@ -83,7 +83,7 @@ const PANEL_ENERGY := 4.0              # hot panels burning against the dark
 # differently (the harsh black/bright patchwork). Keep range modest so each
 # mesh sees <16 lights; project.godot raises the GL limits to 64 total / 16
 # per object. Brightness between pools comes from AMBIENT_ENERGY, not range.
-const LIGHT_ENERGY := 2.6              # OmniLight energy when steady
+const LIGHT_ENERGY := 2.3              # OmniLight energy when steady (slightly darker)
 const LIGHT_RANGE := 5.5               # pool radius — must stay ~< 1.5 cells
 const LIGHT_ATTENUATION := 1.1         # soft edge, no hard cutoff
 
@@ -91,5 +91,5 @@ const LIGHT_ATTENUATION := 1.1         # soft edge, no hard cutoff
 # Atmosphere (reference: dark A24-still grade — isolated warm pools, deep
 # brown-black shadows, drained colour)
 # ---------------------------------------------------------------------------
-const AMBIENT_ENERGY := 1.6            # barely-there ambient; shadows go black
+const AMBIENT_ENERGY := 1.3            # slightly darker ambient; shadows go black
 const FOG_DENSITY := 0.003               # gloom closes in sooner
