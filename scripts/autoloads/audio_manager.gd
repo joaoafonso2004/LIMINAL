@@ -6,11 +6,15 @@ const MAX_SFX: int = 10
 
 var music_player: AudioStreamPlayer
 var sfx_players: Array[AudioStreamPlayer] = []
+var heartbeat_player: AudioStreamPlayer
 
 var _unlocked: bool = false
 var _pending_music: AudioStream = null
 var _pending_music_vol: float = -6.0
 var _pending_music_fade: float = 0.0
+
+var _heartbeat_state := "silent"
+var _heartbeat_tween: Tween
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
@@ -48,6 +52,18 @@ func _create_players() -> void:
 		p.playback_type = AudioServer.PLAYBACK_TYPE_STREAM
 		add_child(p)
 		sfx_players.append(p)
+		
+	# Setup heartbeat player
+	heartbeat_player = AudioStreamPlayer.new()
+	heartbeat_player.name = "HeartbeatPlayer"
+	heartbeat_player.bus = "SFX"
+	heartbeat_player.playback_type = AudioServer.PLAYBACK_TYPE_STREAM
+	var hb_stream := load("res://assets/audio/sfx/player/heartbeat.wav") as AudioStreamWav
+	if hb_stream != null:
+		hb_stream.loop_mode = AudioStreamWav.LOOP_FORWARD
+		heartbeat_player.stream = hb_stream
+	add_child(heartbeat_player)
+	heartbeat_player.volume_db = -40.0
 
 func play_music(stream: AudioStream, volume_db: float = -6.0, fade_in: float = 0.0) -> void:
 	if stream == null:
@@ -94,6 +110,14 @@ func stop_all_sounds() -> void:
 	for p in sfx_players:
 		if is_instance_valid(p):
 			p.stop()
+	# Kill heartbeat
+	if is_instance_valid(heartbeat_player):
+		heartbeat_player.stop()
+		heartbeat_player.volume_db = -40.0
+	_heartbeat_state = "silent"
+	if _heartbeat_tween:
+		_heartbeat_tween.kill()
+		_heartbeat_tween = null
 	if Engine.get_main_loop() is SceneTree:
 		var tree := Engine.get_main_loop() as SceneTree
 		if tree.root:
@@ -101,7 +125,7 @@ func stop_all_sounds() -> void:
 
 func _stop_players_recursive(node: Node) -> void:
 	if node is AudioStreamPlayer or node is AudioStreamPlayer3D or node is AudioStreamPlayer2D:
-		if node != music_player and not sfx_players.has(node):
+		if node != music_player and not sfx_players.has(node) and node != heartbeat_player:
 			node.stop()
 			node.queue_free()
 	for child in node.get_children():
@@ -155,3 +179,40 @@ func _setup_limiter() -> void:
 			limiter.threshold_db = -2.0
 			limiter.soft_clip_db = 1.0
 			AudioServer.add_bus_effect(master_idx, limiter)
+
+
+func set_heartbeat_state(state: String) -> void:
+	if _heartbeat_state == state:
+		return
+	_heartbeat_state = state
+	
+	if not is_instance_valid(heartbeat_player):
+		return
+		
+	if _heartbeat_tween:
+		_heartbeat_tween.kill()
+	_heartbeat_tween = create_tween()
+	_heartbeat_tween.set_parallel(true)
+	
+	match state:
+		"silent":
+			# Decelerate pitch scale back to normal (1.0) and fade volume gradually over 3.5s
+			_heartbeat_tween.tween_property(heartbeat_player, "pitch_scale", 1.0, 3.2).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+			_heartbeat_tween.tween_property(heartbeat_player, "volume_db", -40.0, 3.5).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+			_heartbeat_tween.chain().tween_callback(heartbeat_player.stop)
+		"peek":
+			# Elevated heart rate (1.25x speed, warm volume)
+			if not heartbeat_player.playing:
+				heartbeat_player.volume_db = -40.0
+				heartbeat_player.pitch_scale = 1.25
+				heartbeat_player.play()
+			_heartbeat_tween.tween_property(heartbeat_player, "volume_db", -2.0, 0.4).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+			_heartbeat_tween.tween_property(heartbeat_player, "pitch_scale", 1.25, 0.4).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+		"chase":
+			# Intense adrenaline panic heart rate (1.55x speed, loud volume)
+			if not heartbeat_player.playing:
+				heartbeat_player.volume_db = -40.0
+				heartbeat_player.pitch_scale = 1.55
+				heartbeat_player.play()
+			_heartbeat_tween.tween_property(heartbeat_player, "volume_db", 4.0, 0.3).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+			_heartbeat_tween.tween_property(heartbeat_player, "pitch_scale", 1.55, 0.3).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
