@@ -213,9 +213,6 @@ func _build_cell(c: Vector2i) -> void:
 
 	# Dynamic floor and wall variety based on cell hashes
 	var fl_mat := _floor_mat
-	var hash_floor := _hash3(c.x, c.y, 881)
-	if hash_floor < 0.15: # 15% chance of linoleum
-		fl_mat = _linoleum_mat
 		
 	var wl_mat := _wall_mat
 	var hash_wall := _hash3(c.x, c.y, 992)

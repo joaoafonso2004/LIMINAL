@@ -290,8 +290,8 @@ func _spawn_fp_body() -> void:
 	# Scale and ground the character
 	ModelUtils.setup_character_for_movement(model, 1.8)
 	
-	# Offset backward slightly so head/face stays behind the camera near plane
-	_mesh_root.position = Vector3(0, 0, -0.16)
+	# Center the character model relative to the camera
+	_mesh_root.position = Vector3(0, 0, 0)
 	
 	# Guard against dark mesh from missing normals
 	var meshes := model.find_children("*", "MeshInstance3D")
@@ -314,6 +314,15 @@ func _spawn_fp_body() -> void:
 				var skeleton: Skeleton3D = skeletons[0]
 				var spine_idx := skeleton.find_bone("Spine")
 				if spine_idx != -1:
+					# Permanently scale down rest poses of upper body bones so they are completely hidden
+					# and never reset to scale 1.0 by the animation engine!
+					for i in range(skeleton.get_bone_count()):
+						if is_descendant_of_spine(skeleton, i, spine_idx):
+							var rest := skeleton.get_bone_rest(i)
+							rest.basis = Basis.from_scale(Vector3.ZERO)
+							skeleton.set_bone_rest(i, rest)
+							skeleton.set_bone_pose_scale(i, Vector3.ZERO)
+							
 					for anim_name in lib.get_animation_list():
 						var anim := lib.get_animation(anim_name)
 						if anim != null:
