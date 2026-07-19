@@ -1326,7 +1326,13 @@ func _do_caught() -> void:
 		return
 	if is_instance_valid(_player) and _player.has_meta("is_hiding") and _player.get_meta("is_hiding"):
 		return
-	_ended = true
+
+	# In co-op, the entity catches one player then retreats — it doesn't end.
+	var is_coop := _mp and _world != null
+
+	if not is_coop:
+		_ended = true
+
 	request_flicker.emit(0.0)
 	request_dread.emit(1.0)
 	# The last thing you see: its face, one breath from yours — THEN black.
@@ -1344,7 +1350,25 @@ func _do_caught() -> void:
 		AudioManager.play_sfx(_sfx["jump"], 6.0, 0.92)
 	get_tree().create_timer(0.28).timeout.connect(func():
 		if is_instance_valid(self):
-			caught.emit())
+			caught.emit()
+			# In co-op: despawn figure, stop chase loops, return to idle
+			if is_coop:
+				_stop_chase_loops()
+				_remove_figure()
+				_mode = "idle"
+				request_flicker.emit(0.0)
+				request_dread.emit(0.0)
+				var ov := _get_overlay()
+				if is_instance_valid(ov) and ov.has_method("set_chase_vignette"):
+					ov.set_chase_vignette(false)
+				if is_instance_valid(_camera):
+					_camera.fov = 72.0
+				if has_node("/root/AudioManager"):
+					AudioManager.set_heartbeat_state("silent")
+				var t := _now()
+				_next_peek = t + _rng.randf_range(25.0, 40.0)
+				_next_chase = t + _rng.randf_range(45.0, 90.0)
+	)
 
 # ---------------------------------------------------------------------------
 # STALK — final phase permanent slow follower

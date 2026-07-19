@@ -139,10 +139,19 @@ func update_target(msg: Dictionary) -> void:
 		_prev_actual_pos = _target_pos
 
 
-## Hide/show the body (used when a teammate is caught).
+## Teammate fully dead: collapse body to the floor (visible, not hidden).
 func set_dead(v: bool) -> void:
-	if _mesh_root != null:
-		_mesh_root.visible = not v
+	if _mesh_root == null:
+		return
+	if v:
+		# Collapse the body flat on the ground
+		var tw := create_tween()
+		tw.tween_property(_mesh_root, "rotation:x", -PI * 0.5, 0.5)
+		if is_instance_valid(_revive_beacon):
+			_revive_beacon.visible = false
+	else:
+		var tw := create_tween()
+		tw.tween_property(_mesh_root, "rotation:x", 0.0, 0.35)
 
 
 func _process(delta: float) -> void:
