@@ -1268,14 +1268,15 @@ func _chase_move(delta: float, dist_to_player: float) -> void:
 			return
 	# Speed has moods: a burst from afar, a fraction of mercy up close (the
 	# almost-caught margin players remember), and mounting urgency over time.
-	# Speed rises with every SNUS grabbed: 4.15m/s base up to 5.65m/s at 5 tins!
-	var base_spd := CHASE_SPEED + (_menace * 1.5)
+	# Speed rises gently with every SNUS grabbed: 4.15m/s base up to 4.85m/s at 5 tins!
+	# Because the entity stumbles every ~2.5s, smart cornering ALWAYS allows escape.
+	var base_spd := CHASE_SPEED + (_menace * 0.70)
 	var speed := base_spd * _chase_speed_mult
 	if dist_to_player > 8.0:
-		speed *= 1.1
+		speed *= 1.08
 	elif dist_to_player < 3.0:
-		speed *= 0.93
-	speed += minf(_chase_time * 0.01, 0.25)
+		speed *= 0.92
+	speed += minf(_chase_time * 0.008, 0.12)
 	var step_dir: Vector3 = target - _figure.global_position
 	step_dir.y = 0
 	if step_dir.length() > 0.01:
