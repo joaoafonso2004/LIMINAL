@@ -18,13 +18,13 @@ const FINAL_PHASE_TIME := 600.0         # minute 10: permanent slow stalker
 # ---------------------------------------------------------------------------
 # Vultos — peek (the watchers)
 # ---------------------------------------------------------------------------
-const PEEK_FIRST_SIGHTING := 6.0       # ± random offset, first watcher happens quickly
+const PEEK_FIRST_SIGHTING := 60.0      # ± random offset, first watcher arrives after 1 minute
 const PEEK_DIST_MIN := 6.5              # spawn distance band (closer so we can find clear sightlines)
 const PEEK_DIST_MAX := 14.0
 const PEEK_VANISH_DIST := 3.5           # closer than this → gone before it's seen up close
 const PEEK_MUFFLE_DIST := 8.0           # near-but-unseen → hum drops, world muffles
-const PEEK_GAP_EARLY := 12.0            # seconds between watchers at run start…
-const PEEK_GAP_LATE := 6.0             # …shrinking to this by minute 10
+const PEEK_GAP_EARLY := 35.0            # seconds between watchers at run start…
+const PEEK_GAP_LATE := 20.0             # …shrinking to this by minute 10
 
 # ---------------------------------------------------------------------------
 # Vultos — jumpscare

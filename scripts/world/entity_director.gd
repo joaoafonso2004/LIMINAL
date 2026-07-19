@@ -174,7 +174,7 @@ func _ready() -> void:
 	if ResourceLoader.exists(ANIM_LIB):
 		_anim_lib = load(ANIM_LIB)
 	_load_sfx()
-	_next_peek = 1.0
+	_next_peek = Tuning.PEEK_FIRST_SIGHTING
 	_next_jump = 999.0                                   # armed at JUMP_ARM_TIME
 	_next_chase = 999.0                                  # armed at CHASE_ARM_TIME
 	_next_sound = 25.0
@@ -530,7 +530,7 @@ func _begin_peek() -> void:
 		_stare_timer = -1.0
 		# most watchers hold your gaze a beat before slipping away;
 		# some are gone the instant your eyes land on them
-		_peek_style = "trap" if _rng.randf() < 0.25 else "stealth"
+		_peek_style = "trap" if _rng.randf() < 0.10 else "stealth"
 		_peek_timer = _rng.randf_range(6.0, 11.0)
 		_wire_peek_skeleton()
 		return
@@ -558,7 +558,7 @@ func _begin_peek() -> void:
 	_peek_loop_count = 0
 	_peek_wait_timer = 0.0
 	_stare_timer = -1.0
-	_peek_style = "trap" if _rng.randf() < 0.25 else "stealth"
+	_peek_style = "trap" if _rng.randf() < 0.10 else "stealth"
 	_peek_timer = _rng.randf_range(6.0, 11.0)
 	_wire_peek_skeleton()
 
