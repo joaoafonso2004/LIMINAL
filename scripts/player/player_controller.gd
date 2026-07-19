@@ -81,7 +81,7 @@ func _ready() -> void:
 func _unhandled_input(event: InputEvent) -> void:
 	# Click-to-recapture — pointer lock needs a user gesture on web.
 	if event is InputEventMouseButton and event.pressed:
-		if Input.mouse_mode != Input.MOUSE_MODE_CAPTURED:
+		if not frozen and Input.mouse_mode != Input.MOUSE_MODE_CAPTURED:
 			Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 		return
 
