@@ -62,6 +62,25 @@ func _ready() -> void:
 	add_child(_jumpscare)
 	_jumpscare.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 
+
+var _chase_vignette: ColorRect = null
+var _chase_vignette_active := false
+
+func setup_chase_vignette() -> void:
+	if _chase_vignette != null:
+		return
+	_chase_vignette = ColorRect.new()
+	_chase_vignette.name = "ChaseVignette"
+	_chase_vignette.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_chase_vignette.color = Color(0.8, 0.0, 0.0, 0.0)
+	add_child(_chase_vignette)
+	_chase_vignette.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+
+func set_chase_vignette(active: bool) -> void:
+	_chase_vignette_active = active
+	if not active and is_instance_valid(_chase_vignette):
+		_chase_vignette.color.a = 0.0
+
 	# --- Ending text label ---
 	_ending = Label.new()
 	_ending.name = "EndingText"
@@ -98,6 +117,16 @@ func _process(delta: float) -> void:
 	_dread_cur = lerpf(_dread_cur, clampf(_dread_target, 0.0, 1.0), clampf(delta * 3.0, 0.0, 1.0))
 	if _pulse > 0.0:
 		_pulse = maxf(0.0, _pulse - delta / 0.8)
+
+	if _chase_vignette_active:
+		if _chase_vignette == null:
+			setup_chase_vignette()
+		var t := Time.get_ticks_msec() / 1000.0
+		var pulse_a := (sin(t * 12.0) * 0.5 + 0.5) * 0.25 + 0.08
+		_chase_vignette.color = Color(0.8, 0.02, 0.02, pulse_a)
+	elif is_instance_valid(_chase_vignette):
+		_chase_vignette.color.a = lerpf(_chase_vignette.color.a, 0.0, 6.0 * delta)
+
 	_apply_shader_params()
 
 

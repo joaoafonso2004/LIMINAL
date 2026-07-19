@@ -12,7 +12,7 @@ const CELL := 4.0                 # must match maze_manager CELL
 const PICKUP_RANGE := 2.2
 # Tins beyond the streamed-wall horizon (VIEW_RADIUS 6 cells ≈ 24 m) would
 # float visibly in the unbuilt void — cap their visibility safely inside it.
-const VISIBLE_RANGE := 18.0
+const VISIBLE_RANGE := 34.0   # walls now stream to 48 m — keep tins inside that horizon
 const SNUS_PATH := "res://assets/props/items/SNUS.glb"
 const PICKUP_SFX := "res://assets/audio/sfx/pickup/pickup_snus_pickup.mp3"
 const UNLOCK_SFX := "res://assets/audio/sfx/pickup/pickup_escape_unlocked.mp3"

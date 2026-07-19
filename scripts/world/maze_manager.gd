@@ -12,8 +12,8 @@ signal exit_spawned(world_pos: Vector3)
 signal exit_reached()
 
 const CELL: float = 4.0
-const VIEW_RADIUS: int = 6          # cells kept around the player
-const FREE_RADIUS: int = 8          # cells beyond this are released (bumps salt)
+const VIEW_RADIUS: int = 12         # cells kept around the player (48 m — no void at corridor ends)
+const FREE_RADIUS: int = 14         # cells beyond this are released (bumps salt)
 # Real OmniLights only this close. 4 → up to ~50 live lights, inside the GL
 # limit of 64; radius 6 created ~90+ and the renderer dropped lights per-mesh
 # at random (the patchy floor/wall lighting). Cells beyond this still read:

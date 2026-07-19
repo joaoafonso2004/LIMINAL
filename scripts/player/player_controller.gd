@@ -78,6 +78,9 @@ func _ready() -> void:
 	_spawn_fp_body()
 
 
+var is_holding_breath: bool = false
+
+
 func _unhandled_input(event: InputEvent) -> void:
 	# Click-to-recapture — pointer lock needs a user gesture on web.
 	if event is InputEventMouseButton and event.pressed:
@@ -85,7 +88,8 @@ func _unhandled_input(event: InputEvent) -> void:
 			Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 		return
 
-	if frozen:
+	var is_hiding := get_meta("is_hiding", false)
+	if frozen and not is_hiding:
 		return
 
 	# Mouse-look only while captured. User multiplier from the options menu.
@@ -95,19 +99,21 @@ func _unhandled_input(event: InputEvent) -> void:
 		if has_node("/root/Settings"):
 			sens *= Settings.mouse_sensitivity
 		rotation.y -= motion.relative.x * sens
-		_pitch = clampf(_pitch - motion.relative.y * sens, -1.4, 1.4)
+		_pitch = clampf(_pitch - motion.relative.y * sens, -1.2 if is_hiding else -1.4, 1.2 if is_hiding else 1.4)
 
 
 func _physics_process(delta: float) -> void:
+	var is_hiding := get_meta("is_hiding", false)
+	if is_hiding:
+		velocity = Vector3.ZERO
+		# Hold breath while hiding in locker (Space or Right Mouse Button)
+		is_holding_breath = Input.is_physical_key_pressed(KEY_SPACE) or Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT)
+		return
+	else:
+		is_holding_breath = false
+
 	if frozen:
-		# Still settle to ground, but no input-driven movement or bob.
-		if not is_on_floor():
-			velocity.y -= gravity * delta
-		else:
-			velocity.y = 0.0
-		velocity.x = move_toward(velocity.x, 0.0, friction * delta)
-		velocity.z = move_toward(velocity.z, 0.0, friction * delta)
-		move_and_slide()
+		velocity = Vector3.ZERO
 		return
 
 	# Crouching check (Ctrl or C key)
