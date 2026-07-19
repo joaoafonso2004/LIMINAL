@@ -12,9 +12,13 @@ signal exit_spawned(world_pos: Vector3)
 signal exit_reached()
 
 const CELL: float = 4.0
-const VIEW_RADIUS: int = 5          # cells kept around the player
-const FREE_RADIUS: int = 7          # cells beyond this are released (bumps salt)
-const LIGHT_RADIUS: int = 2         # real OmniLights only this close
+const VIEW_RADIUS: int = 6          # cells kept around the player
+const FREE_RADIUS: int = 8          # cells beyond this are released (bumps salt)
+# Real OmniLights only this close. 4 → up to ~50 live lights, inside the GL
+# limit of 64; radius 6 created ~90+ and the renderer dropped lights per-mesh
+# at random (the patchy floor/wall lighting). Cells beyond this still read:
+# emissive panels + ambient light carry them.
+const LIGHT_RADIUS: int = 4
 # Look/layout knobs live in scripts/tuning.gd — edit there, not here.
 const WALL_DENSITY: float = Tuning.WALL_DENSITY
 const PILLAR_DENSITY: float = Tuning.PILLAR_DENSITY
@@ -143,8 +147,9 @@ func _stream(center: Vector2i) -> void:
 	for dx in range(-VIEW_RADIUS, VIEW_RADIUS + 1):
 		for dz in range(-VIEW_RADIUS, VIEW_RADIUS + 1):
 			var c := Vector2i(center.x + dx, center.y + dz)
-			if not _cells.has(c):
-				_build_cell(c)
+			if abs(c.x) <= 16 and abs(c.y) <= 16:
+				if not _cells.has(c):
+					_build_cell(c)
 	# Free out-of-range cells (bump salt so they regenerate differently)
 	var to_free: Array = []
 	for c in _cells.keys():
@@ -161,6 +166,11 @@ func _wall_present(owner: Vector2i, dir: int) -> bool:
 	var nb: Vector2i = owner + (Vector2i(1, 0) if dir == DIR_E else Vector2i(0, 1))
 	if _cheb(owner) <= START_CLEAR and _cheb(nb) <= START_CLEAR:
 		return false
+
+	# Enforce hard boundaries between -16 and 16 (map is limited by solid walls)
+	if abs(owner.x) > 16 or abs(owner.y) > 16 or abs(nb.x) > 16 or abs(nb.y) > 16:
+		return true
+
 	var h := _hash3(owner.x, owner.y, dir * 131 + _salt_of(owner) * 977)
 	return h < WALL_DENSITY
 
@@ -223,10 +233,14 @@ func _build_cell(c: Vector2i) -> void:
 		if not _edge_between(c, nb):
 			open_edges += 1
 
+	# Not all fixtures burn alike: some run at barely half strength, giving
+	# each pool its own character and leaving near-dark stretches between.
+	var light_mult := lerpf(0.5, 1.0, _hash3(c.x, c.y, 77))
 	var data := {
 		"node": root, "light": null, "panel_mat": null,
 		"dark": false, "anomaly": false, "exit": false,
-		"base_energy": PANEL_ENERGY, "flick_seed": _hash3(c.x, c.y, 7),
+		"base_energy": PANEL_ENERGY * light_mult, "light_mult": light_mult,
+		"flick_seed": _hash3(c.x, c.y, 7),
 	}
 
 	# Ceiling light panel (visual) — sparse: roughly half the open cells are lit,
@@ -277,15 +291,16 @@ func _place_anomaly(root: Node3D, c: Vector2i, data: Dictionary) -> void:
 	if kind == 0 and _chair_scene:
 		var chair: Node3D = _chair_scene.instantiate()
 		root.add_child(chair)
-		ModelUtils.scale_to_height(chair, 1.1)
+		ModelUtils.scale_to_height(chair, 0.62)
 		ModelUtils.ground_model(chair, 0.0)
 		chair.position += Vector3(1.1, 0, 1.1)
 		chair.rotation.y = deg_to_rad(180)  # facing the wall — wrong
 		placed = true
 	elif kind == 1 and _phone_scene:
 		var phone: Node3D = _phone_scene.instantiate()
+		phone.set_meta("phone_anomaly", true)
 		root.add_child(phone)
-		ModelUtils.scale_to_height(phone, 0.25)
+		ModelUtils.scale_to_height(phone, 0.13)
 		phone.position = Vector3(-1.2, 0.02, -1.0)
 		placed = true
 	else:
@@ -337,22 +352,38 @@ func _update_lights(center: Vector2i) -> void:
 			d["light"] = null
 
 func _animate_lights(delta: float) -> void:
+	# Retrieve the active entity figure node if it exists
+	var fig: Node3D = get_node_or_null("../Figure")
+
 	# Flicker scales with panic. Each lit cell flickers on its own phase.
 	for c in _cells.keys():
 		var d = _cells[c]
 		var pmat = d.get("panel_mat")
 		if pmat == null or bool(d["exit"]):
 			continue  # the exit beacon never flickers
+		
+		# Proximity flicker: lights within 8.0 meters of the stalking/chasing entity flicker dynamically!
+		var prox_flicker := 0.0
+		if is_instance_valid(fig):
+			var cell_pos := Vector3(c.x * 4.0, 1.8, c.y * 4.0)
+			var dist_to_fig := cell_pos.distance_to(fig.global_position)
+			if dist_to_fig < 8.0:
+				prox_flicker = clampf(1.0 - (dist_to_fig / 8.0), 0.0, 1.0)
+
 		var seed_v: float = d["flick_seed"]
 		var f := 1.0
 		# rare but deep idle flicker, each light on its own phase (never all at once)
 		var idle := 0.5 + 0.5 * sin(_time * (3.0 + seed_v * 6.0) + seed_v * 30.0)
 		if idle > 0.965:
 			f = 0.2
-		if _flicker > 0.01:
+		
+		var active_flicker := maxf(_flicker, prox_flicker)
+		if active_flicker > 0.01:
 			var strobe := sin(_time * (24.0 + seed_v * 20.0) + seed_v * 12.0)
-			if strobe > (1.0 - _flicker * 1.2):
-				f = 0.1
+			# Stronger flicker rate the closer the entity is
+			if strobe > (1.0 - active_flicker * 1.35):
+				f = randf_range(0.01, 0.15)
+
 		(pmat as StandardMaterial3D).emission_energy_multiplier = float(d["base_energy"]) * f
 		var lg = d["light"]
 		if lg and is_instance_valid(lg):
@@ -369,6 +400,88 @@ func _check_anomaly(pc: Vector2i) -> void:
 
 func player_in_anomaly() -> bool:
 	return _anomaly_cells.has(_cur_cell)
+
+func open_cells() -> Array:
+	return _cells.keys()
+
+func is_cell_open(c: Vector2i) -> bool:
+	if _cheb(c) <= START_CLEAR:
+		return true
+	var walls := 0
+	if _wall_present(c, DIR_E): walls += 1
+	if _wall_present(c, DIR_N): walls += 1
+	if _wall_present(c + Vector2i(-1, 0), DIR_E): walls += 1
+	if _wall_present(c + Vector2i(0, -1), DIR_N): walls += 1
+	return walls < 4
+
+## Wall-end corners near `center` where a figure can lurk behind cover and
+## lean out. Each entry: {"out": exposed spot just past the wall end,
+## "hide": fully covered spot behind the wall}. Only FREE corners qualify —
+## wall ends where no colinear wall continues, no perpendicular wall joins,
+## and no pillar sits on the junction (leaning "around" a connected wall
+## would clip straight through geometry). Callers must still ray-validate
+## (out visible / hide occluded) against the actual player position.
+func peek_corners(center: Vector3, min_d: float, max_d: float) -> Array:
+	var results: Array = []
+	var cc := _cell_of(center)
+	var r := int(ceil(max_d / CELL)) + 1
+	for dx in range(-r, r + 1):
+		for dz in range(-r, r + 1):
+			if results.size() >= 40:
+				return results
+			var c := Vector2i(cc.x + dx, cc.y + dz)
+			# East wall: plane x = cx*4+2, runs along Z.
+			if _wall_present(c, DIR_E):
+				var wx := c.x * CELL + CELL * 0.5
+				for endsign in [-1, 1]:
+					if _wall_present(Vector2i(c.x, c.y + endsign), DIR_E):
+						continue  # wall continues — not a free corner
+					var junction := Vector2i(c.x, c.y) if endsign == 1 else Vector2i(c.x, c.y - 1)
+					if _corner_blocked(junction, DIR_E):
+						continue  # a perpendicular wall or pillar joins here
+					var ez := c.y * CELL + float(endsign) * CELL * 0.5
+					for side in [-1, 1]:
+						var out := Vector3(wx + side * 0.6, 0.0, ez + endsign * 0.4)
+						var hide := Vector3(wx + side * 0.6, 0.0, ez - endsign * 0.75)
+						var d := Vector2(out.x - center.x, out.z - center.z).length()
+						if d >= min_d and d <= max_d:
+							results.append({"out": out, "hide": hide})
+			# North wall: plane z = cz*4+2, runs along X.
+			if _wall_present(c, DIR_N):
+				var wz := c.y * CELL + CELL * 0.5
+				for endsign in [-1, 1]:
+					if _wall_present(Vector2i(c.x + endsign, c.y), DIR_N):
+						continue
+					var junction2 := Vector2i(c.x, c.y) if endsign == 1 else Vector2i(c.x - 1, c.y)
+					if _corner_blocked(junction2, DIR_N):
+						continue
+					var ex := c.x * CELL + float(endsign) * CELL * 0.5
+					for side in [-1, 1]:
+						var out := Vector3(ex + endsign * 0.4, 0.0, wz + side * 0.6)
+						var hide := Vector3(ex - endsign * 0.75, 0.0, wz + side * 0.6)
+						var d := Vector2(out.x - center.x, out.z - center.z).length()
+						if d >= min_d and d <= max_d:
+							results.append({"out": out, "hide": hide})
+	return results
+
+## Is the (+X,+Z) corner junction of cell `k` occupied by anything besides the
+## wall we're peeking around? `our_dir` is the axis of OUR wall: only walls
+## PERPENDICULAR to it (and pillars) block the corner.
+func _corner_blocked(k: Vector2i, our_dir: int) -> bool:
+	# pillar placement mirrors _build_cell exactly
+	if _cheb(k) > START_CLEAR and _hash3(k.x, k.y, 401) < PILLAR_DENSITY:
+		return true
+	if our_dir == DIR_E:
+		return _wall_present(k, DIR_N) or _wall_present(Vector2i(k.x + 1, k.y), DIR_N)
+	return _wall_present(k, DIR_E) or _wall_present(Vector2i(k.x, k.y + 1), DIR_E)
+
+func get_phone_node_in_cell(cell: Vector2i) -> Node3D:
+	var d = _cells.get(cell)
+	if d and is_instance_valid(d.get("node")):
+		for child in d["node"].get_children():
+			if child.has_meta("phone_anomaly"):
+				return child
+	return null
 
 # ---------------------------------------------------------------------------
 # The single real exit

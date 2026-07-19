@@ -75,6 +75,10 @@ Os valores de pacing/dificuldade/atmosfera estão centralizados em
 [`docs/design/game-design.md`](docs/design/game-design.md). A visão do jogo e o
 mapa de sistemas estão em [`CLAUDE.md`](CLAUDE.md).
 
+## Créditos
+
+- Sons da entidade: **juanjo_sound** — *Backrooms Entity SFX (Vol. 1)*
+
 ### Exportar o .exe
 
 1. Editor → *Project → Export* (o preset **Windows Desktop** está incluído em

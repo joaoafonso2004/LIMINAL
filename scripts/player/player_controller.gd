@@ -25,9 +25,20 @@ var camera: Camera3D
 
 var _bob_time: float = 0.0
 var _idle_time: float = 0.0
-var _prev_bob_sin: float = 0.0
+var _prev_bob_cos: float = 0.0
+# Look pitch is the PLAYER's; the bob may only add a tiny offset on top.
+# (Writing camera.rotation.x directly from the bob erased mouse pitch.)
+var _pitch: float = 0.0
+var _bob_pitch: float = 0.0
 
 var _step_stream: AudioStream = null
+var shake_intensity: float = 0.0
+
+var _mesh_root: Node3D
+var _anim_player: AnimationPlayer
+var _cur_clip: String = ""
+var is_crouching: bool = false
+var _current_eye_height: float = EYE_HEIGHT
 
 # Look-back tracking.
 var _facing_ref: float = 0.0
@@ -42,7 +53,8 @@ func _ready() -> void:
 	camera = Camera3D.new()
 	camera.name = "Camera"
 	camera.position.y = EYE_HEIGHT
-	camera.near = 0.05
+	# Safe near clip plane so standing close to walls doesn't clip through them
+	camera.near = 0.08
 	camera.fov = 72.0
 	add_child(camera)
 	camera.make_current()
@@ -63,6 +75,7 @@ func _ready() -> void:
 			_step_stream = res
 
 	_facing_ref = rotation.y
+	_spawn_fp_body()
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -82,8 +95,7 @@ func _unhandled_input(event: InputEvent) -> void:
 		if has_node("/root/Settings"):
 			sens *= Settings.mouse_sensitivity
 		rotation.y -= motion.relative.x * sens
-		camera.rotation.x -= motion.relative.y * sens
-		camera.rotation.x = clampf(camera.rotation.x, -1.4, 1.4)
+		_pitch = clampf(_pitch - motion.relative.y * sens, -1.4, 1.4)
 
 
 func _physics_process(delta: float) -> void:
@@ -98,6 +110,26 @@ func _physics_process(delta: float) -> void:
 		move_and_slide()
 		return
 
+	# Crouching check (Ctrl or C key)
+	var wants_crouch := Input.is_physical_key_pressed(KEY_CTRL) or Input.is_physical_key_pressed(KEY_C)
+	is_crouching = wants_crouch
+	
+	var target_speed := speed
+	var target_eye_height := EYE_HEIGHT
+	var target_mesh_scale_y := 1.0
+	
+	if is_crouching:
+		target_speed = 1.15
+		target_eye_height = 0.85
+		target_mesh_scale_y = 0.62
+		
+	# Smoothly transition camera height
+	_current_eye_height = lerpf(_current_eye_height, target_eye_height, 10.0 * delta)
+	
+	# Smoothly squash/stretch the first-person body mesh to simulate crouching
+	if _mesh_root and is_instance_valid(_mesh_root):
+		_mesh_root.scale.y = lerpf(_mesh_root.scale.y, target_mesh_scale_y, 10.0 * delta)
+
 	# Gravity.
 	if not is_on_floor():
 		velocity.y -= gravity * delta
@@ -110,7 +142,7 @@ func _physics_process(delta: float) -> void:
 		direction = direction.normalized()
 
 	# Weighted, unsettling gait: ramp toward target rather than snapping.
-	var target := direction * speed
+	var target := direction * target_speed
 	if direction.length() > 0.001:
 		velocity.x = move_toward(velocity.x, target.x, accel * delta)
 		velocity.z = move_toward(velocity.z, target.z, accel * delta)
@@ -122,6 +154,8 @@ func _physics_process(delta: float) -> void:
 
 	_update_head_bob(delta)
 	_update_look_back()
+	_update_body_animation()
+	_hide_head()
 
 
 func _update_head_bob(delta: float) -> void:
@@ -132,37 +166,79 @@ func _update_head_bob(delta: float) -> void:
 	var idle_sway := sin(_idle_time * 1.3) * 0.006 + cos(_idle_time * 0.7) * 0.004
 
 	if walking:
-		_bob_time += delta * BOB_SPEED
-		var bob_sin := sin(_bob_time)
-		camera.position.y = EYE_HEIGHT + bob_sin * BOB_AMOUNT + idle_sway
-		# Weight shift: half-frequency roll flips side on every stride —
-		# a subtle left-right head tilt in step with the footfalls.
-		camera.rotation.z = sin(_bob_time * 0.5) * STEP_TILT
+		# Scale step frequency with movement speed
+		var speed_mult := clampf(horizontal_speed / speed, 0.5, 1.3)
+		_bob_time += delta * BOB_SPEED * speed_mult
+		
+		var bob_sin: float = sin(_bob_time)
+		var bob_cos: float = cos(_bob_time)
+		
+		# Vertical dip: double-frequency absolute sine creates the heel-strike bounce
+		var vertical_dip: float = -absf(bob_sin) * BOB_AMOUNT
+		
+		# Horizontal sway: single-frequency weight shift
+		var horizontal_sway: float = bob_cos * (BOB_AMOUNT * 0.45)
+		
+		camera.position.y = _current_eye_height + vertical_dip + idle_sway
+		camera.position.x = horizontal_sway
+		
+		# Rotate Z (roll) for side-to-side sway and tilt camera down slightly on heel strikes
+		camera.rotation.z = -bob_sin * STEP_TILT
+		_bob_pitch = lerpf(_bob_pitch, -absf(bob_sin) * 0.006, clampf(8.0 * delta, 0.0, 1.0))
 
-		# A full stride: sine crosses its low point (from below-zero back up).
-		if _prev_bob_sin <= 0.0 and bob_sin > 0.0:
+		# Trigger footstep at the bottom of the dip (where cos crosses zero)
+		if (_prev_bob_cos >= 0.0 and bob_cos < 0.0) or (_prev_bob_cos <= 0.0 and bob_cos > 0.0):
 			_play_footstep()
-		_prev_bob_sin = bob_sin
+		_prev_bob_cos = bob_cos
 	else:
-		# Ease back to base eye height plus subtle idle sway and breathing roll.
-		var base := EYE_HEIGHT + idle_sway
+		var base := _current_eye_height + idle_sway
 		camera.position.y = lerpf(camera.position.y, base, clampf(delta * 6.0, 0.0, 1.0))
+		camera.position.x = lerpf(camera.position.x, 0.0, clampf(delta * 6.0, 0.0, 1.0))
+
 		var idle_roll := sin(_idle_time * 0.9) * IDLE_TILT
 		camera.rotation.z = lerpf(camera.rotation.z, idle_roll, clampf(delta * 4.0, 0.0, 1.0))
-		_prev_bob_sin = 0.0
+		_bob_pitch = lerpf(_bob_pitch, 0.0, clampf(delta * 6.0, 0.0, 1.0))
+		_prev_bob_cos = 0.0
+
+	# Player pitch rules; the bob is only ever a whisper on top of it.
+	camera.rotation.x = _pitch + _bob_pitch
+
+	# Apply dynamic camera shake (e.g. from nearby sprinting entity)
+	if shake_intensity > 0.001:
+		camera.position.x += randf_range(-1.0, 1.0) * shake_intensity * 0.15
+		camera.position.y += randf_range(-1.0, 1.0) * shake_intensity * 0.15
+		camera.position.z += randf_range(-1.0, 1.0) * shake_intensity * 0.1
+		camera.rotation.x += randf_range(-1.0, 1.0) * shake_intensity * 0.012
+		camera.rotation.y += randf_range(-1.0, 1.0) * shake_intensity * 0.012
+		camera.rotation.z += randf_range(-1.0, 1.0) * shake_intensity * 0.012
+		
+		# Decay shake intensity
+		shake_intensity = lerpf(shake_intensity, 0.0, 8.0 * delta)
 
 
 func _play_footstep() -> void:
 	if _step_stream == null:
 		return
 	if has_node("/root/AudioManager"):
-		AudioManager.play_sfx(_step_stream, -14.0, randf_range(0.9, 1.08))
+		# Lower pitch (0.75 - 0.92) makes footsteps sound like soft, damp, heavy thuds on old carpet
+		var pitch := randf_range(0.75, 0.92)
+		var vol := -18.5
+		if is_crouching:
+			vol = -26.0
+			pitch = randf_range(0.68, 0.82) # even heavier/softer when crouching!
+		else:
+			vol = randf_range(-19.5, -16.5)
+		
+		AudioManager.play_sfx(_step_stream, vol, pitch)
+		
 		# Backrooms "wrong echo": a rare quieter delayed half-step.
 		if randf() < 0.12:
 			var t := get_tree().create_timer(randf_range(0.12, 0.22))
 			t.timeout.connect(func() -> void:
 				if is_instance_valid(self) and has_node("/root/AudioManager"):
-					AudioManager.play_sfx(_step_stream, -20.0, randf_range(0.9, 1.05)))
+					var echo_pitch := pitch * randf_range(0.9, 1.05)
+					var echo_vol := vol - 6.0
+					AudioManager.play_sfx(_step_stream, echo_vol, echo_pitch))
 
 
 func _update_look_back() -> void:
@@ -190,3 +266,109 @@ func set_frozen(v: bool) -> void:
 
 func get_current_cell(cell_size: float) -> Vector2i:
 	return Vector2i(floori(global_position.x / cell_size), floori(global_position.z / cell_size))
+
+
+func _spawn_fp_body() -> void:
+	var model_path := "res://assets/characters/survivor_body/survivor_body.glb"
+	var anim_path := "res://assets/characters/survivor_body/survivor_body_animations.tres"
+	if not ResourceLoader.exists(model_path):
+		return
+	
+	_mesh_root = Node3D.new()
+	_mesh_root.name = "FirstPersonBody"
+	add_child(_mesh_root)
+	
+	var packed := load(model_path) as PackedScene
+	if packed == null:
+		return
+	var model := packed.instantiate() as Node3D
+	_mesh_root.add_child(model)
+	
+	# Scale and ground the character
+	ModelUtils.setup_character_for_movement(model, 1.8)
+	
+	# Offset backward slightly so head/face stays behind the camera near plane
+	_mesh_root.position = Vector3(0, 0, -0.16)
+	
+	# Guard against dark mesh from missing normals
+	var meshes := model.find_children("*", "MeshInstance3D")
+	if meshes.size() > 0:
+		var first := meshes[0] as MeshInstance3D
+		if first != null and not ModelUtils.has_vertex_normals(first):
+			ModelUtils.generate_normals_for_all(model)
+			
+	# Setup AnimationPlayer
+	_anim_player = AnimationPlayer.new()
+	model.add_child(_anim_player)
+	
+	if ResourceLoader.exists(anim_path):
+		var lib := load(anim_path) as AnimationLibrary
+		if lib != null:
+			# Make a deep copy of the library to avoid hiding remote player heads in co-op!
+			lib = lib.duplicate(true)
+			var skeletons := model.find_children("*", "Skeleton3D")
+			if skeletons.size() > 0:
+				var skeleton: Skeleton3D = skeletons[0]
+				var spine_idx := skeleton.find_bone("Spine")
+				if spine_idx != -1:
+					for anim_name in lib.get_animation_list():
+						var anim := lib.get_animation(anim_name)
+						if anim != null:
+							for track_idx in range(anim.get_track_count() - 1, -1, -1):
+								var path := anim.track_get_path(track_idx)
+								var bone_name := ""
+								if path.get_subnames_count() > 0:
+									bone_name = path.get_subname(0)
+								elif ":" in str(path):
+									bone_name = str(path).split(":")[-1]
+									
+								if bone_name != "":
+									var bone_idx := skeleton.find_bone(bone_name)
+									if bone_idx != -1 and is_descendant_of_spine(skeleton, bone_idx, spine_idx):
+										anim.remove_track(track_idx)
+			
+			_anim_player.add_animation_library("", lib)
+			ModelUtils.set_animation_loops(_anim_player)
+			if _anim_player.has_animation("ual1_Idle"):
+				_anim_player.play("ual1_Idle")
+				_cur_clip = "ual1_Idle"
+
+
+func _update_body_animation() -> void:
+	if _anim_player == null:
+		return
+	var horizontal_speed := Vector2(velocity.x, velocity.z).length()
+	var want: String = "ual1_Walk" if horizontal_speed > 0.3 and is_on_floor() and not frozen else "ual1_Idle"
+	if want == _cur_clip:
+		return
+	if _anim_player.has_animation(want):
+		_anim_player.play(want)
+		_cur_clip = want
+
+
+func is_descendant_of_spine(skeleton: Skeleton3D, bone_idx: int, spine_idx: int) -> bool:
+	if bone_idx == spine_idx:
+		return true
+	var parent := skeleton.get_bone_parent(bone_idx)
+	while parent != -1:
+		if parent == spine_idx:
+			return true
+		parent = skeleton.get_bone_parent(parent)
+	return false
+
+
+func _hide_head() -> void:
+	if _mesh_root == null or not is_instance_valid(_mesh_root):
+		return
+	var skeletons := _mesh_root.find_children("*", "Skeleton3D")
+	if skeletons.size() > 0:
+		var skeleton: Skeleton3D = skeletons[0]
+		
+		# Scale down all upper body bones (Spine, Chest, UpperChest, Neck, Head, shoulders, arms, hands)
+		# individually to Vector3.ZERO. This hides the entire upper body in first-person, preventing any hollow mesh clipping,
+		# while leaving the hips, legs, and feet fully visible when looking down.
+		var spine_idx := skeleton.find_bone("Spine")
+		if spine_idx != -1:
+			for i in range(skeleton.get_bone_count()):
+				if is_descendant_of_spine(skeleton, i, spine_idx):
+					skeleton.set_bone_pose_scale(i, Vector3.ZERO)
