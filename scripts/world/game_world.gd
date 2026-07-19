@@ -78,6 +78,104 @@ func _ready() -> void:
 	if has_node("/root/GameManager"):
 		GameManager.start_run()
 	_last_pos = _player.global_position if is_instance_valid(_player) else Vector3.ZERO
+	_setup_intro_screen()
+
+var _intro_canvas: CanvasLayer = null
+
+func _setup_intro_screen() -> void:
+	if is_instance_valid(_player) and _player.has_method("set_frozen"):
+		_player.set_frozen(true)
+	elif is_instance_valid(_player):
+		_player.frozen = true
+		
+	_intro_canvas = CanvasLayer.new()
+	_intro_canvas.layer = 50
+	add_child(_intro_canvas)
+	
+	var root := Control.new()
+	root.mouse_filter = Control.MOUSE_FILTER_STOP
+	_intro_canvas.add_child(root)
+	root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	
+	var bg := ColorRect.new()
+	bg.color = Color(0, 0, 0, 0.88)
+	root.add_child(bg)
+	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	
+	var panel := Panel.new()
+	panel.custom_minimum_size = Vector2(650, 420)
+	root.add_child(panel)
+	panel.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
+	panel.offset_left = -325.0
+	panel.offset_right = 325.0
+	panel.offset_top = -210.0
+	panel.offset_bottom = 210.0
+	
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.08, 0.07, 0.06, 0.95)
+	style.border_width_left = 2
+	style.border_width_top = 2
+	style.border_width_right = 2
+	style.border_width_bottom = 2
+	style.border_color = Color(0.65, 0.52, 0.28, 0.8)
+	style.set_corner_radius_all(8)
+	panel.add_theme_stylebox_override("panel", style)
+	
+	var vbox := VBoxContainer.new()
+	panel.add_child(vbox)
+	vbox.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	vbox.offset_left = 30
+	vbox.offset_right = -30
+	vbox.offset_top = 30
+	vbox.offset_bottom = -30
+	vbox.add_theme_constant_override("separation", 14)
+	
+	var title := Label.new()
+	title.text = "LEVEL 0 — THE BACKROOMS"
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.add_theme_color_override("font_color", Color(0.96, 0.85, 0.45, 1.0))
+	title.add_theme_font_size_override("font_size", 28)
+	vbox.add_child(title)
+	
+	var author := Label.new()
+	author.text = "Made by João Afonso"
+	author.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	author.add_theme_color_override("font_color", Color(0.75, 0.65, 0.45, 0.85))
+	author.add_theme_font_size_override("font_size", 17)
+	vbox.add_child(author)
+	
+	var desc := Label.new()
+	desc.text = "OBJECTIVE:\nCollect 5 SNUS boxes scattered across the maze to unlock the exit door.\n\nCONTROLS:\nWASD - Move | Shift - Sprint | Ctrl/C - Crouch\nSpace / RMB inside Locker - Hold Breath"
+	desc.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	desc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	desc.add_theme_color_override("font_color", Color(0.85, 0.82, 0.72, 0.9))
+	desc.add_theme_font_size_override("font_size", 16)
+	vbox.add_child(desc)
+	
+	var btn := Button.new()
+	btn.text = "ENTER THE MAZE"
+	btn.custom_minimum_size = Vector2(240, 50)
+	btn.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	btn.focus_mode = Control.FOCUS_NONE
+	vbox.add_child(btn)
+	
+	btn.pressed.connect(_on_intro_start_pressed)
+
+func _on_intro_start_pressed() -> void:
+	if not is_instance_valid(_intro_canvas):
+		return
+	if is_instance_valid(_player) and _player.has_method("set_frozen"):
+		_player.set_frozen(false)
+	elif is_instance_valid(_player):
+		_player.frozen = false
+		
+	var tw := create_tween()
+	var root: Control = _intro_canvas.get_child(0) as Control
+	if root:
+		tw.tween_property(root, "modulate:a", 0.0, 0.4)
+		await tw.finished
+	_intro_canvas.queue_free()
+	_intro_canvas = null
 
 # ---------------------------------------------------------------------------
 func _setup_environment() -> void:
@@ -592,9 +690,9 @@ func _ending_exit() -> void:
 		AudioManager.fade_out_music(3.0)
 	if _overlay and _overlay.has_method("show_ending"):
 		_overlay.show_ending(
-			"You left.\n\nBut did you count the figures?\nThey counted you.",
-			Color(0.95, 0.95, 0.93, 1.0),
-			Color(0.15, 0.14, 0.1))
+			"YOU ESCAPED THE BACKROOMS\n\n— CREDITS —\n\nCreated & Developed by\nJoão Afonso\n\nThank you for playing!",
+			Color(0.04, 0.04, 0.05, 1.0),
+			Color(0.95, 0.82, 0.45))
 	await get_tree().create_timer(9.0).timeout
 	if has_node("/root/GameManager"):
 		GameManager.to_menu()
