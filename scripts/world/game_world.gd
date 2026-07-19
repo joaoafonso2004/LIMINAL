@@ -647,28 +647,6 @@ func _tick_phone_interaction() -> void:
 ## follows depends on WHICH phone it is (fixed per phone, same for every
 ## co-op client): some are radar phones (a red pulse marks the nearest tin
 ## for a few seconds — a bearing, not a map), some are trapped (the entity
-func _cardinal_direction_name(diff: Vector3) -> String:
-	var angle := atan2(-diff.z, diff.x)
-	var deg := rad_to_deg(angle)
-	if deg < 0.0:
-		deg += 360.0
-	if deg >= 337.5 or deg < 22.5:
-		return "EAST [ → ]"
-	elif deg >= 22.5 and deg < 67.5:
-		return "NORTH-EAST [ ↗ ]"
-	elif deg >= 67.5 and deg < 112.5:
-		return "NORTH [ ↑ ]"
-	elif deg >= 112.5 and deg < 157.5:
-		return "NORTH-WEST [ ↖ ]"
-	elif deg >= 157.5 and deg < 202.5:
-		return "WEST [ ← ]"
-	elif deg >= 202.5 and deg < 247.5:
-		return "SOUTH-WEST [ ↙ ]"
-	elif deg >= 247.5 and deg < 292.5:
-		return "SOUTH [ ↓ ]"
-	else:
-		return "SOUTH-EAST [ ↘ ]"
-
 func _phone_fate(phone: Node3D) -> String:
 	var cx := int(floor(phone.global_position.x / 4.0 + 0.5))
 	var cz := int(floor(phone.global_position.z / 4.0 + 0.5))
@@ -689,6 +667,7 @@ func _interact_with_phone(phone: Node3D) -> void:
 		return
 	var breath_stream = load("res://assets/audio/juanjo/juanjo_sound - Backrooms Entity 23.wav")
 	var click_stream = load("res://assets/audio/sfx/environment/environment_light_flicker_buzz.mp3")
+	var echo_stream = load("res://assets/audio/sfx/environment/environment_distant_footsteps_echo.mp3")
 	var fate := _phone_fate(phone)
 
 	# Receiver pick-up click, then the breathing — every phone breathes.
@@ -706,21 +685,19 @@ func _interact_with_phone(phone: Node3D) -> void:
 					_maze.set_flicker(0.0)
 			)
 
-		# Every phone provides directional guidance to the nearest uncollected SNUS!
+		# Pure spatial 3D audio guidance: emits a directional sound in the exact direction of the nearest SNUS!
 		var nearest_pos := Vector3.ZERO
 		if _snus and _snus.has_method("get_nearest_uncollected_pos"):
 			nearest_pos = _snus.get_nearest_uncollected_pos(_player.global_position)
 		if nearest_pos != Vector3.ZERO:
 			var diff := nearest_pos - _player.global_position
-			var dist := int(round(diff.length()))
-			var dir_str := _cardinal_direction_name(diff)
-			if _snus_ui and _snus_ui.has_method("show_phone_hint"):
-				_snus_ui.show_phone_hint(dir_str, dist, 8.0)
-				
-			# 3D spatial ping in the direction of the target SNUS
 			var dir_vec := diff.normalized()
+			
+			# Play a loud 3D sound cue 6 meters away from player in the physical direction of the SNUS
 			var ping_pos := _player.global_position + dir_vec * 6.0
-			AudioManager.play_sfx_3d(self, breath_stream, ping_pos, 4.0, 30.0, 1.1)
+			AudioManager.play_sfx_3d(self, breath_stream, ping_pos, 6.0, 40.0, 1.1)
+			if echo_stream:
+				AudioManager.play_sfx_3d(self, echo_stream, ping_pos, 4.0, 40.0, 0.8)
 			
 			_radar_timer = 20.0
 			_radar_ping_cd = 0.05
