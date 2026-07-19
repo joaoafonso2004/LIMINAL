@@ -467,17 +467,21 @@ func _begin_peek() -> void:
 		return
 	# Fallback: open spot near a wall (no free corner in range right now).
 	var spot := _find_peek_spot()
-	if spot == Vector3.INF:
+	if spot.is_empty():
 		var t := 0.0
 		if has_node("/root/GameManager"):
 			t = GameManager.run_time
 		_next_peek = t + 2.0  # retry very soon (2.0s) instead of waiting full gap!
 		return
-	_spawn_figure(spot, false)
+	_spawn_figure(spot["hide"], false)
 	if _figure:
 		_face_player(_figure)
 		_play_anim("ual1_Idle")
-	_peek_corner = false
+	_peek_corner = true
+	_peek_from = spot["hide"]
+	_peek_to = spot["out"]
+	_lean = 0.0
+	_lean_dir = 1.0
 	_mode = "peek"
 	_peek_recede = false
 	_peek_witnessed = false
@@ -624,7 +628,7 @@ func _stare_breath(dist: float) -> void:
 	if is_instance_valid(_figure):
 		AudioManager.play_sfx_3d(self, _sfx["breath"], _figure.global_position + Vector3(0, 1.5, 0), -4.0, 26.0, _rng.randf_range(0.92, 1.02))
 
-func _find_peek_spot() -> Vector3:
+func _find_peek_spot() -> Dictionary:
 	# A valid peek spot must be (a) currently OFF-screen, so it "appears" when
 	# the player turns, and (b) on a clear sightline from the player's eye —
 	# otherwise it spawns behind maze walls and is never seen at all.
@@ -638,21 +642,33 @@ func _find_peek_spot() -> Vector3:
 		var head := p + Vector3(0, 1.6, 0)
 		if _in_view_point(head):
 			continue
-		if not _ray_clear(eye, head):
-			continue
 		
-		# Corner/Wall check: Must be close to a wall/pillar to look like it is peeking around it!
-		var next_to_wall := false
+		# Wall check: find a wall near the candidate position
+		var wall_dir := Vector3.ZERO
 		for dir in [Vector3.FORWARD, Vector3.BACK, Vector3.LEFT, Vector3.RIGHT]:
-			var hit := _ray_hit(head, head + dir * 1.25)
+			var hit := _ray_hit(head, head + dir * 1.5)
 			if not hit.is_empty():
-				next_to_wall = true
+				wall_dir = dir
 				break
-		if not next_to_wall:
+				
+		if wall_dir == Vector3.ZERO:
 			continue
 			
-		return p
-	return Vector3.INF
+		# Construct hide and out positions along the wall direction
+		var hide_pos := p + wall_dir * 0.7
+		var out_pos := p - wall_dir * 0.4
+		
+		# Verify sightlines: leaning out must be visible, hiding must be covered
+		if not _ray_clear(eye, out_pos + Vector3(0, 1.6, 0)):
+			continue
+		if _ray_clear(eye, hide_pos + Vector3(0, 1.6, 0)):
+			continue
+			
+		return {
+			"hide": hide_pos,
+			"out": out_pos
+		}
+	return {}
 
 # ---------------------------------------------------------------------------
 # SHADOW — the silent tail. It follows from wall cover, standing EXPOSED at a
