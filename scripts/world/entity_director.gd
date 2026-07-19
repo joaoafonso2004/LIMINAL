@@ -64,6 +64,8 @@ var _peek_style := "stare"             # stare: holds your gaze a beat, THEN sli
 									   # away | skittish: gone the instant you look
 var _stare_timer := -1.0               # -1 = stare not started yet
 var _peek_witnessed := false           # did this apparition ever enter the view?
+var _peek_loop_count := 0
+var _peek_wait_timer := 0.0
 var _unseen_streak := 0                # peeks the player never saw → retry sooner
 var _last_lookback := 0                # GameManager.look_back_count already handled
 var _lookback_cd := 0.0                # cooldown for the turn-around reveal
@@ -465,6 +467,8 @@ func _begin_peek() -> void:
 		_mode = "peek"
 		_peek_recede = false
 		_peek_witnessed = false
+		_peek_loop_count = 0
+		_peek_wait_timer = 0.0
 		_stare_timer = -1.0
 		# most watchers hold your gaze a beat before slipping away;
 		# some are gone the instant your eyes land on them
@@ -491,6 +495,8 @@ func _begin_peek() -> void:
 	_mode = "peek"
 	_peek_recede = false
 	_peek_witnessed = false
+	_peek_loop_count = 0
+	_peek_wait_timer = 0.0
 	_stare_timer = -1.0
 	_peek_style = "skittish" if _rng.randf() < 0.25 else "stare"
 	_peek_timer = _rng.randf_range(6.0, 11.0)
@@ -525,9 +531,33 @@ func _tick_peek(delta: float) -> void:
 		return
 	_peek_timer -= delta
 
-	# NEVER seen up close: gone before the player can reach it.
 	var flat := _figure.global_position - _player.global_position
 	flat.y = 0.0
+	
+	# If player gets too close to the cover (5.5m), duck back instantly and vanish!
+	var too_close := flat.length() < 5.5
+	if too_close and not _peek_recede:
+		_peek_recede = true
+		_lean_dir = -1.0
+
+	# Handle Peek-a-boo wait state
+	if _peek_wait_timer > 0.0:
+		_peek_wait_timer -= delta
+		_figure.global_position = _peek_from
+		_set_figure_alpha(0.0) # Completely invisible behind cover
+		
+		# If the player approaches during the wait, vanish permanently
+		if too_close:
+			_end_apparition()
+			return
+			
+		if _peek_wait_timer <= 0.0:
+			# Peek again!
+			_lean_dir = 1.0
+			_set_figure_alpha(1.0)
+		return
+
+	# NEVER seen up close: gone before the player can reach it.
 	if flat.length() < Tuning.PEEK_VANISH_DIST:
 		_end_apparition()
 		return
@@ -537,15 +567,13 @@ func _tick_peek(delta: float) -> void:
 	if visible_now:
 		_peek_witnessed = true
 
-	# Near but unseen → the hum drops and the world goes muffled.
+	# Near but unseen → muffle
 	var prox := flat.length() < Tuning.PEEK_MUFFLE_DIST and not visible_now
 	if prox != _prox_muffle:
 		_prox_muffle = prox
 		muffle.emit(prox)
 
-	# Eyes met. Skittish ones cease to exist the instant you find them —
-	# the rest hold your gaze for a beat (THAT is the "being watched" moment)
-	# before slipping away.
+	# Eyes met
 	var staring := false
 	if looked and visible_now:
 		if _peek_style == "skittish":
@@ -556,20 +584,20 @@ func _tick_peek(delta: float) -> void:
 			_stare_timer = _rng.randf_range(0.18, 0.35)
 			_stare_breath(flat.length())
 			_add_stress(0.12)
+			if has_node("/root/AudioManager"):
+				AudioManager.set_heartbeat_state("peek")
 		if _stare_timer > 0.0:
 			_stare_timer = maxf(0.0, _stare_timer - delta)
 			staring = _stare_timer > 0.0
 
 	if _peek_corner:
-		# Corner mode: slide between cover and the exposed lean-out spot.
 		if looked and not staring and _stare_timer >= 0.0:
 			_peek_recede = true
 			_lean_dir = -1.0
 		elif not staring and not _peek_recede:
 			# leans out slowly (0.7s)
 			_lean = clampf(_lean + _lean_dir * delta / 0.7, 0.0, 1.0)
-			var k := _lean * _lean * (3.0 - 2.0 * _lean)
-			_figure.global_position = _peek_from.lerp(_peek_to, k)
+			_figure.global_position = _peek_from
 			_face_player(_figure)
 		
 		if _peek_timer <= 0.0 and not looked and not _peek_recede:
@@ -584,15 +612,25 @@ func _tick_peek(delta: float) -> void:
 			_lean_dir = -1.0
 			# Duck back twice as fast!
 			_lean = clampf(_lean + _lean_dir * delta / 0.22, 0.0, 1.0)
-			var k := _lean * _lean * (3.0 - 2.0 * _lean)
-			_figure.global_position = _peek_from.lerp(_peek_to, k)
+			_figure.global_position = _peek_from
 			_face_player(_figure)
 			
 			_fade_figure(delta, 8.0)
-			# Vanish instantly if out of sight or fully behind cover
 			if not visible_now or _lean <= 0.0 or _figure_alpha() <= 0.02:
-				_end_apparition()
-				return
+				# If we are too close, or we already did a peek-a-boo loop, end it
+				if too_close or _peek_loop_count >= 1:
+					_end_apparition()
+					return
+				else:
+					# Trigger peek-a-boo wait!
+					_peek_loop_count += 1
+					_peek_wait_timer = _rng.randf_range(1.5, 3.0)
+					_peek_recede = false
+					_stare_timer = -1.0
+					_lean = 0.0
+					_lean_dir = 0.0
+					_set_figure_alpha(0.0)
+					return
 		else:
 			# Sprint backward very fast and fade
 			var away: Vector3 = (_figure.global_position - _player.global_position)
@@ -606,10 +644,8 @@ func _tick_peek(delta: float) -> void:
 				_end_apparition()
 				return
 	elif staring:
-		# Locked eyes: it does not move. It just looks back.
 		_face_player(_figure)
 	else:
-		# It WATCHES: quietly tracks the player while unobserved.
 		_face_player(_figure)
 
 	if _peek_timer <= 0.0 and not looked and not _peek_corner:
@@ -859,6 +895,8 @@ func _begin_chase() -> void:
 	_mode = "chase"
 	_chase_state = "windup"
 	_windup_timer = 2.2
+	if has_node("/root/AudioManager"):
+		AudioManager.set_heartbeat_state("chase")
 	_windup_spot = spot
 	_chase_time = 0.0
 	_los_lost = 0.0
@@ -1133,6 +1171,8 @@ func _end_chase(vanished: bool) -> void:
 	chase_ended.emit()
 	request_flicker.emit(0.0)
 	_add_stress(0.55)
+	if has_node("/root/AudioManager"):
+		AudioManager.set_heartbeat_state("silent")
 	var t := 0.0
 	if has_node("/root/GameManager"):
 		t = GameManager.run_time
@@ -1348,9 +1388,13 @@ func _end_apparition() -> void:
 	_peek_corner = false
 	_lean = 0.0
 	_lean_dir = 1.0
+	_peek_loop_count = 0
+	_peek_wait_timer = 0.0
 	_stare_timer = -1.0
 	muffle.emit(false)
 	_next_peek = _dread_scaled_peek_gap()
+	if has_node("/root/AudioManager"):
+		AudioManager.set_heartbeat_state("silent")
 
 ## Looping positional one-figure audio layer (dies with the figure).
 func _attach_loop(parent: Node3D, stream, vol: float) -> AudioStreamPlayer3D:
@@ -1464,10 +1508,20 @@ func _spawn_mirror() -> void:
 # ---------------------------------------------------------------------------
 # Perception helpers
 # ---------------------------------------------------------------------------
+func _get_scare_target_pos() -> Vector3:
+	if is_instance_valid(_figure):
+		if _peek_corner:
+			return _peek_from.lerp(_peek_to, _lean) + Vector3(0, 1.4, 0)
+		return _figure.global_position + Vector3(0, 1.4, 0)
+	return Vector3.ZERO
+
 func _in_view(node: Node3D) -> bool:
 	if not is_instance_valid(node) or not is_instance_valid(_camera):
 		return false
-	return _in_view_point(node.global_position + Vector3(0, 1.4, 0))
+	var p := _get_scare_target_pos()
+	if p == Vector3.ZERO:
+		return false
+	return _in_view_point(p)
 
 func _in_view_point(p: Vector3) -> bool:
 	if not is_instance_valid(_camera):
@@ -1482,7 +1536,9 @@ func _player_looking_at(node: Node3D, tol: float) -> bool:
 	# true if the figure is near screen-center (player is directly regarding it)
 	if not is_instance_valid(node) or not is_instance_valid(_camera):
 		return false
-	var p: Vector3 = node.global_position + Vector3(0, 1.4, 0)
+	var p := _get_scare_target_pos()
+	if p == Vector3.ZERO:
+		return false
 	if _camera.is_position_behind(p):
 		return false
 	var to: Vector3 = (p - _camera.global_position).normalized()
@@ -1492,7 +1548,10 @@ func _player_looking_at(node: Node3D, tol: float) -> bool:
 func _has_los(node: Node3D) -> bool:
 	if not is_instance_valid(node) or not is_instance_valid(_camera):
 		return false
-	return _ray_clear(_camera.global_position, node.global_position + Vector3(0, 1.2, 0))
+	var p := _get_scare_target_pos()
+	if p == Vector3.ZERO:
+		return false
+	return _ray_clear(_camera.global_position, p)
 
 func _ray_hit(from: Vector3, to: Vector3) -> Dictionary:
 	var space := get_world_3d().direct_space_state
@@ -1546,26 +1605,43 @@ func _apply_peek_bone_poses(skeleton: Skeleton3D, delta: float) -> void:
 	if not is_instance_valid(_figure) or not _peek_corner:
 		return
 	var spine_idx := skeleton.find_bone("Spine")
+	var chest_idx := skeleton.find_bone("Chest")
 	if spine_idx == -1:
 		return
 		
-	# Determine lean direction relative to local right vector
+	# Determine lean direction relative to local space of the figure
 	var out_dir := (_peek_to - _peek_from).normalized()
-	var right_vector := _figure.global_transform.basis.x
-	var dot_side := right_vector.dot(out_dir)
-	var tilt_side := 1.0 if dot_side >= 0.0 else -1.0
+	var local_out_dir := _figure.global_transform.basis.inverse() * out_dir
 	
-	# Leaning rotation (roll sideways)
-	var target_tilt := tilt_side * _lean * 0.46
+	# Roll sideways along local Z (Vector3.FORWARD)
+	var roll_axis := Vector3.FORWARD
+	var tilt_side := 1.0 if local_out_dir.x >= 0.0 else -1.0
+	
+	# Distributed tilt angles
+	var spine_tilt := tilt_side * _lean * 0.25
+	var chest_tilt := tilt_side * _lean * 0.22
+	
 	var t := Time.get_ticks_msec() / 1000.0
 	var breath := sin(t * 2.5) * 0.03
-	var rot := Quaternion(Vector3.FORWARD, target_tilt + breath)
-	skeleton.set_bone_pose_rotation(spine_idx, rot)
+	
+	# Set Spine rotation
+	var spine_rot := Quaternion(roll_axis, spine_tilt + breath)
+	skeleton.set_bone_pose_rotation(spine_idx, spine_rot)
+	
+	# Set Chest rotation (distributing curvature)
+	if chest_idx != -1:
+		var chest_rot := Quaternion(roll_axis, chest_tilt)
+		skeleton.set_bone_pose_rotation(chest_idx, chest_rot)
+		
+	# Slide Spine bone sideways to stretch body out from cover while feet are anchored
+	var spine_rest_pos := skeleton.get_bone_rest(spine_idx).origin
+	var spine_slide := local_out_dir * (_lean * 0.75)
+	skeleton.set_bone_pose_position(spine_idx, spine_rest_pos + spine_slide)
 	
 	# Minor neck head tilt to face player slightly contorted
 	var neck_idx := skeleton.find_bone("Neck")
 	if neck_idx != -1:
-		var neck_rot := Quaternion(Vector3.UP, sin(t * 1.5) * 0.05) * Quaternion(Vector3.FORWARD, target_tilt * 0.3)
+		var neck_rot := Quaternion(Vector3.UP, sin(t * 1.5) * 0.05) * Quaternion(roll_axis, (spine_tilt + chest_tilt) * 0.3)
 		skeleton.set_bone_pose_rotation(neck_idx, neck_rot)
 
 
