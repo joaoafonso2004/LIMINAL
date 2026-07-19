@@ -211,7 +211,16 @@ func _setup_environment() -> void:
 func _spawn_player() -> void:
 	_player = CharacterBody3D.new()
 	_player.set_script(load(PLAYER_SCRIPT))
-	_player.position = Vector3(0, 0.1, 0)
+	
+	# Side-by-side spawn positions for co-op players in the entry room
+	var pid := NetManager.local_player_id if _is_mp and has_node("/root/NetManager") else 0
+	var spawn_offsets := [
+		Vector3(0, 0.1, 0),
+		Vector3(1.4, 0.1, 0),
+		Vector3(-1.4, 0.1, 0),
+		Vector3(0, 0.1, 1.4)
+	]
+	_player.position = spawn_offsets[pid % spawn_offsets.size()]
 	add_child(_player)
 	_camera = _player.get_camera() if _player.has_method("get_camera") else null
 	if _player.has_signal("looked_back"):
@@ -564,6 +573,12 @@ func _setup_multiplayer() -> void:
 
 func _spawn_remote_players() -> void:
 	var rp_script := load("res://scripts/world/remote_player.gd")
+	var spawn_offsets := [
+		Vector3(0, 0.1, 0),
+		Vector3(1.4, 0.1, 0),
+		Vector3(-1.4, 0.1, 0),
+		Vector3(0, 0.1, 1.4)
+	]
 	for pid in range(NetManager.max_players):
 		if pid == NetManager.local_player_id:
 			continue
@@ -571,9 +586,8 @@ func _spawn_remote_players() -> void:
 		rp.set_script(rp_script)
 		rp.player_id = pid
 		add_child(rp)
-		rp.global_position = Vector3(0, 0.1, 0)
+		rp.global_position = spawn_offsets[pid % spawn_offsets.size()]
 		_remote_players[pid] = rp
-		# Remote teammates can also grab snus near them.
 		if _snus and _snus.has_method("register_player_body"):
 			_snus.register_player_body(rp)
 
