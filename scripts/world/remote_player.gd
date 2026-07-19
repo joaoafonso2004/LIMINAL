@@ -42,17 +42,6 @@ func _ready() -> void:
 	_mesh_root.name = "MeshRoot"
 	add_child(_mesh_root)
 
-	# 3D Name Tag above teammate's head (visible through walls so you never lose your friends)
-	var name_tag := Label3D.new()
-	name_tag.text = "PLAYER %d" % (player_id + 1)
-	name_tag.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-	name_tag.no_depth_test = true
-	name_tag.position = Vector3(0, 1.95, 0)
-	name_tag.modulate = Color(0.95, 0.85, 0.55, 0.85)
-	name_tag.outline_modulate = Color(0.0, 0.0, 0.0, 1.0)
-	name_tag.font_size = 20
-	add_child(name_tag)
-
 	# 3D Revive Beacon above downed teammate's head
 	_revive_beacon = Label3D.new()
 	_revive_beacon.text = "[+] NEED REVIVE"
