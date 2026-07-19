@@ -40,7 +40,10 @@ var _time: float = 0.0
 
 # Materials (built once)
 var _wall_mat: StandardMaterial3D
+var _wall_dirty_mat: StandardMaterial3D
+var _wall_dark_mat: StandardMaterial3D
 var _floor_mat: StandardMaterial3D
+var _linoleum_mat: StandardMaterial3D
 var _ceil_mat: StandardMaterial3D
 var _panel_mat: StandardMaterial3D
 var _exit_mat: StandardMaterial3D
@@ -76,7 +79,11 @@ func _ready() -> void:
 func _build_materials() -> void:
 	# Dark sepia-brown grade — dirty tan walls sinking to black, hot warm panels.
 	_wall_mat = _mk_mat("res://assets/textures/walls/backrooms_yellow_wallpaper.png", Vector3(2, 1, 1.5), 0.92, Color(0.76, 0.68, 0.5))
+	_wall_dirty_mat = _mk_mat("res://assets/textures/walls/backrooms_yellow_wallpaper.png", Vector3(2, 1, 1.5), 0.88, Color(0.58, 0.53, 0.38))
+	_wall_dark_mat = _mk_mat("res://assets/textures/walls/backrooms_yellow_wallpaper.png", Vector3(2, 1, 1.5), 0.90, Color(0.68, 0.60, 0.44))
+
 	_floor_mat = _mk_mat("res://assets/textures/floors/backrooms_damp_carpet.png", Vector3(2, 2, 1), 0.98, Color(0.58, 0.54, 0.44))
+	_linoleum_mat = _mk_mat("res://assets/textures/floors/backrooms_linoleum.png", Vector3(2, 2, 1), 0.75, Color(0.72, 0.68, 0.58))
 	_ceil_mat = _mk_mat("res://assets/textures/surfaces/backrooms_ceiling_tiles.png", Vector3(2, 2, 1), 0.95, Color(0.62, 0.6, 0.52))
 	_panel_mat = StandardMaterial3D.new()
 	_panel_mat.albedo_color = Color(0.9, 0.82, 0.62)
@@ -204,28 +211,41 @@ func _build_cell(c: Vector2i) -> void:
 	body.collision_mask = 0
 	root.add_child(body)
 
+	# Dynamic floor and wall variety based on cell hashes
+	var fl_mat := _floor_mat
+	var hash_floor := _hash3(c.x, c.y, 881)
+	if hash_floor < 0.15: # 15% chance of linoleum
+		fl_mat = _linoleum_mat
+		
+	var wl_mat := _wall_mat
+	var hash_wall := _hash3(c.x, c.y, 992)
+	if hash_wall < 0.12: # 12% chance of dirty wall
+		wl_mat = _wall_dirty_mat
+	elif hash_wall < 0.24: # 12% chance of dark wall
+		wl_mat = _wall_dark_mat
+
 	# Floor
-	_add_box(root, body, Vector3(CELL, 0.1, CELL), Vector3(0, -0.05, 0), _floor_mat, true)
+	_add_box(root, body, Vector3(CELL, 0.1, CELL), Vector3(0, -0.05, 0), fl_mat, true)
 	# Ceiling
 	_add_box(root, body, Vector3(CELL, 0.1, CELL), Vector3(0, WALL_H + 0.05, 0), _ceil_mat, true)
 
 	# Owned walls: East (+X) and North (+Z) — chunky slabs, like the reference.
 	if _wall_present(c, DIR_E):
-		_add_box(root, body, Vector3(0.35, WALL_H, CELL), Vector3(CELL * 0.5, WALL_H * 0.5, 0), _wall_mat, true)
+		_add_box(root, body, Vector3(0.35, WALL_H, CELL), Vector3(CELL * 0.5, WALL_H * 0.5, 0), wl_mat, true)
 	if _wall_present(c, DIR_N):
-		_add_box(root, body, Vector3(CELL, WALL_H, 0.35), Vector3(0, WALL_H * 0.5, CELL * 0.5), _wall_mat, true)
+		_add_box(root, body, Vector3(CELL, WALL_H, 0.35), Vector3(0, WALL_H * 0.5, CELL * 0.5), wl_mat, true)
 	# Cap the far boundary so the fog edge isn't fully open where neighbors are missing.
 	var west_owner := Vector2i(c.x - 1, c.y)
 	if not _cells.has(west_owner) and _cheb(c) > START_CLEAR and _wall_present(west_owner, DIR_E):
-		_add_box(root, body, Vector3(0.35, WALL_H, CELL), Vector3(-CELL * 0.5, WALL_H * 0.5, 0), _wall_mat, false)
+		_add_box(root, body, Vector3(0.35, WALL_H, CELL), Vector3(-CELL * 0.5, WALL_H * 0.5, 0), wl_mat, false)
 	var south_owner := Vector2i(c.x, c.y - 1)
 	if not _cells.has(south_owner) and _cheb(c) > START_CLEAR and _wall_present(south_owner, DIR_N):
-		_add_box(root, body, Vector3(CELL, WALL_H, 0.35), Vector3(0, WALL_H * 0.5, -CELL * 0.5), _wall_mat, false)
+		_add_box(root, body, Vector3(CELL, WALL_H, 0.35), Vector3(0, WALL_H * 0.5, -CELL * 0.5), wl_mat, false)
 
 	# Square pillar at this cell's +X/+Z corner: the open-plan halls of Level 0
 	# are held up by a loose grid of wallpapered columns.
 	if _cheb(c) > START_CLEAR and _hash3(c.x, c.y, 401) < PILLAR_DENSITY:
-		_add_box(root, body, Vector3(0.7, WALL_H, 0.7), Vector3(CELL * 0.5, WALL_H * 0.5, CELL * 0.5), _wall_mat, true)
+		_add_box(root, body, Vector3(0.7, WALL_H, 0.7), Vector3(CELL * 0.5, WALL_H * 0.5, CELL * 0.5), wl_mat, true)
 
 	# How open is this cell? (count open edges)
 	var open_edges := 0

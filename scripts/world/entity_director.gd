@@ -1129,6 +1129,8 @@ func _end_chase(vanished: bool) -> void:
 func _do_caught() -> void:
 	if _ended:
 		return
+	if is_instance_valid(_player) and _player.has_meta("is_hiding") and _player.get_meta("is_hiding"):
+		return
 	_ended = true
 	request_flicker.emit(0.0)
 	request_dread.emit(1.0)

@@ -52,6 +52,7 @@ var _radar_timer := 0.0
 var _radar_ping_cd := 0.0
 var _interact_prompt: Label = null
 var _interact_canvas: CanvasLayer = null
+var _lockers: Node3D = null
 
 func _ready() -> void:
 	_is_mp = has_node("/root/NetManager") and NetManager.is_multiplayer
@@ -69,6 +70,7 @@ func _ready() -> void:
 	_spawn_pause()
 	_spawn_snus()
 	_spawn_snus_ui()
+	_spawn_lockers()
 	_setup_interact_prompt()
 	_setup_ambient()
 	if _is_mp:
@@ -607,6 +609,12 @@ func _tick_phone_interaction() -> void:
 	if not is_instance_valid(_player) or not is_instance_valid(_maze):
 		return
 	if Input.is_action_just_pressed("interact"):
+		# 1. Check locker interaction
+		if _lockers and _lockers.has_method("toggle_hide_in_locker"):
+			if _lockers.toggle_hide_in_locker():
+				return
+				
+		# 2. Check phone interaction
 		var px := int(floor(_player.global_position.x / 4.0 + 0.5))
 		var pz := int(floor(_player.global_position.z / 4.0 + 0.5))
 		var pcell := Vector2i(px, pz)
@@ -795,13 +803,18 @@ func _update_interact_prompt(delta: float) -> void:
 	var target_text := ""
 	var in_range := false
 	
-	# 1. Check SNUS proximity
-	if _snus and _snus.has_method("is_snus_in_range"):
+	# 1. Check if player is already inside locker
+	if _lockers and _lockers.has_method("is_player_inside") and _lockers.is_player_inside():
+		target_text = "[E] LEAVE LOCKER"
+		in_range = true
+	
+	# 2. Check SNUS proximity
+	if not in_range and _snus and _snus.has_method("is_snus_in_range"):
 		if _snus.is_snus_in_range(_player.global_position):
 			target_text = "[E] GRAB SNUS"
 			in_range = true
 			
-	# 2. Check Telephone proximity (if SNUS isn't already taking priority)
+	# 3. Check Telephone proximity (if SNUS isn't already taking priority)
 	if not in_range:
 		var px := int(floor(_player.global_position.x / 4.0 + 0.5))
 		var pz := int(floor(_player.global_position.z / 4.0 + 0.5))
@@ -815,6 +828,13 @@ func _update_interact_prompt(delta: float) -> void:
 						target_text = "[E] ANSWER TELEPHONE"
 						in_range = true
 						
+	# 4. Check Locker proximity
+	if not in_range and _lockers and _lockers.has_method("get_nearest_locker_in_range"):
+		var locker = _lockers.get_nearest_locker_in_range(_player.global_position)
+		if is_instance_valid(locker):
+			target_text = "[E] ENTER LOCKER"
+			in_range = true
+			
 	# Respond instantly and smoothly fade
 	if in_range:
 		_interact_prompt.text = target_text
