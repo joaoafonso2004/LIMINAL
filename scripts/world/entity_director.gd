@@ -616,7 +616,7 @@ func _tick_peek(delta: float) -> void:
 		_end_apparition()
 		return
 
-	var looked := _player_looking_at(_figure, 0.22)
+	var looked := _player_looking_at(_figure, 0.40) or _in_view(_figure)
 	var visible_now := _in_view(_figure) and _has_los(_figure)
 	if visible_now:
 		_peek_witnessed = true
@@ -635,33 +635,29 @@ func _tick_peek(delta: float) -> void:
 	else:
 		request_flicker.emit(0.0)
 
-	# Reaction gaze window: 0.18s eye contact so player clearly sees the head
-	var staring := false
+	# Trigger recede as soon as player looks or sees the entity!
 	if (visible_now or looked) and not _peek_recede:
 		if _stare_timer < 0.0:
-			_stare_timer = 0.18  # sweet spot eye-contact reaction duration
+			_stare_timer = 0.12  # quick eye-contact reaction duration
 			_add_stress(0.12)
-			# audio fires ONLY on true eye contact — a head you merely have
-			# on-screen must not trigger phantom breath/heartbeat (fix #13)
-			if looked:
-				_peek_reaction_sound(flat.length())
-				if has_node("/root/AudioManager"):
-					AudioManager.set_heartbeat_state("peek")
+			_peek_reaction_sound(flat.length())
+			if has_node("/root/AudioManager"):
+				AudioManager.set_heartbeat_state("peek")
 		if _stare_timer > 0.0:
 			_stare_timer = maxf(0.0, _stare_timer - delta)
-			staring = _stare_timer > 0.0
-		if not staring:
+		if _stare_timer <= 0.0:
 			_peek_recede = true
 			_lean_dir = -1.0
 
 	if _peek_corner:
 		if not _peek_recede:
-			# leans out slowly (0.7s)
-			_lean = clampf(_lean + _lean_dir * delta / 0.7, 0.0, 1.0)
+			# leans out slowly (0.5s)
+			_lean = clampf(_lean + _lean_dir * delta / 0.5, 0.0, 1.0)
 			_figure.global_position = _peek_from.lerp(_peek_to, _lean * 0.75)
 			_face_player(_figure)
 			_set_figure_alpha(clampf(_lean * 2.0, 0.0, 1.0))
 		
+		# Auto-recede after 2.0 seconds if player doesn't look
 		if _peek_timer <= 0.0 and not _peek_recede:
 			_peek_recede = true
 			_lean_dir = -1.0
@@ -669,12 +665,12 @@ func _tick_peek(delta: float) -> void:
 	if _peek_recede:
 		if _peek_corner:
 			_lean_dir = -1.0
-			# Smooth stealthy duck back behind wall (0.45s sweet spot)
-			_lean = clampf(_lean + _lean_dir * delta / 0.45, 0.0, 1.0)
+			# Smooth stealthy duck back behind wall (0.35s sweet spot)
+			_lean = clampf(_lean + _lean_dir * delta / 0.35, 0.0, 1.0)
 			_figure.global_position = _peek_from.lerp(_peek_to, _lean * 0.75)
 			_face_player(_figure)
-			# Stay visible while pulling back behind cover, then fade to 0 when hidden
-			var alpha_val := 1.0 if _lean > 0.08 else 0.0
+			# Stay visible while pulling back behind cover, then fade out
+			var alpha_val := 1.0 if _lean > 0.1 else 0.0
 			_set_figure_alpha(alpha_val)
 			
 			if _lean <= 0.0:
@@ -1632,11 +1628,7 @@ func _spawn_mirror() -> void:
 # ---------------------------------------------------------------------------
 func _get_scare_target_pos() -> Vector3:
 	if is_instance_valid(_figure):
-		if _peek_corner:
-			# The head peeks sideways from the hide position toward the out position
-			var out_dir := (_peek_to - _peek_from).normalized()
-			return _peek_from + out_dir * (_lean * 0.5) + Vector3(0, 1.6, 0)
-		return _figure.global_position + Vector3(0, 1.4, 0)
+		return _figure.global_position + Vector3(0, 1.7, 0)
 	return Vector3.ZERO
 
 func _in_view(node: Node3D) -> bool:
