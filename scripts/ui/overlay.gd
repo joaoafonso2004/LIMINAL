@@ -178,25 +178,36 @@ func clear_ending() -> void:
 func trigger_jumpscare() -> void:
 	if not is_instance_valid(_jumpscare):
 		return
-	var img_path := "res://assets/ui/jumpscare_face.png"
+	var img_path := "res://assets/characters/jumpscare.png"
 	if ResourceLoader.exists(img_path):
 		_jumpscare.texture = load(img_path)
 	
 	var vp_size := get_viewport().get_visible_rect().size
 	_jumpscare.pivot_offset = vp_size / 2.0
 	
-	_jumpscare.scale = Vector3(0.85, 0.85, 1.0)
+	_jumpscare.scale = Vector3(0.7, 0.7, 1.0)
 	_jumpscare.modulate = Color(1.0, 1.0, 1.0, 1.0)
 	_jumpscare.visible = true
+	_jumpscare.position = Vector2.ZERO
+	
+	# Trigger a massive VHS aberration signal glitch
+	pulse(3.5)
 	
 	var tw := create_tween()
 	tw.set_parallel(true)
-	tw.tween_property(_jumpscare, "scale", Vector3(1.2, 1.2, 1.0), 0.24).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
-	tw.tween_property(_jumpscare, "modulate", Color(1.0, 0.15, 0.15, 1.0), 0.15)
+	tw.tween_property(_jumpscare, "scale", Vector3(1.3, 1.3, 1.0), 0.3).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	tw.tween_property(_jumpscare, "modulate", Color(1.3, 0.1, 0.1, 1.0), 0.2)
+	
+	# Add a violent high-frequency shake to simulate a frantic attack twitch
+	var shake_tw := create_tween()
+	shake_tw.set_loops(6)
+	var shake_offset := 35.0
+	shake_tw.tween_property(_jumpscare, "position", Vector2(randf_range(-shake_offset, shake_offset), randf_range(-shake_offset, shake_offset)), 0.05)
 	
 	var tw2 := create_tween()
-	tw2.tween_interval(0.35)
-	tw2.tween_property(_jumpscare, "modulate", Color(0.0, 0.0, 0.0, 1.0), 0.5)
+	tw2.tween_interval(0.4)
+	tw2.tween_property(_jumpscare, "modulate", Color(0.0, 0.0, 0.0, 1.0), 0.45)
 	tw2.tween_callback(func():
 		if is_instance_valid(_jumpscare):
-			_jumpscare.visible = false)
+			_jumpscare.visible = false
+			_jumpscare.position = Vector2.ZERO)
