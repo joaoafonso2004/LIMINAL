@@ -11,6 +11,7 @@ var master_volume := 1.0       # 0..1 linear
 var music_volume := 1.0
 var sfx_volume := 1.0
 var fullscreen := false
+var crt_filter := true
 
 
 func _ready() -> void:
@@ -28,6 +29,7 @@ func load_settings() -> void:
 	music_volume = clampf(float(cf.get_value("audio", "music", 1.0)), 0.0, 1.0)
 	sfx_volume = clampf(float(cf.get_value("audio", "sfx", 1.0)), 0.0, 1.0)
 	fullscreen = bool(cf.get_value("video", "fullscreen", false))
+	crt_filter = bool(cf.get_value("video", "crt_filter", true))
 
 
 func save_settings() -> void:
@@ -37,6 +39,7 @@ func save_settings() -> void:
 	cf.set_value("audio", "music", music_volume)
 	cf.set_value("audio", "sfx", sfx_volume)
 	cf.set_value("video", "fullscreen", fullscreen)
+	cf.set_value("video", "crt_filter", crt_filter)
 	cf.save(PATH)
 
 

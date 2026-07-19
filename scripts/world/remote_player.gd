@@ -17,7 +17,7 @@ var _cur_clip: String = ""
 # Networked smoothing state.
 var _target_pos: Vector3
 var _target_rot_y: float
-var _prev_target_pos: Vector3
+var _prev_actual_pos: Vector3
 var _speed_smooth: float
 var _got_first: bool = false
 
@@ -108,7 +108,7 @@ func update_target(msg: Dictionary) -> void:
 		_got_first = true
 		global_position = _target_pos
 		rotation.y = _target_rot_y
-		_prev_target_pos = _target_pos
+		_prev_actual_pos = _target_pos
 
 
 ## Hide/show the body (used when a teammate is caught).
@@ -125,9 +125,9 @@ func _process(delta: float) -> void:
 	global_position = global_position.lerp(_target_pos, w)
 	rotation.y = lerp_angle(rotation.y, _target_rot_y, w)
 
-	var raw_speed: float = (_target_pos - _prev_target_pos).length() / max(delta, 0.001)
-	_prev_target_pos = _target_pos
-	_speed_smooth = lerp(_speed_smooth, raw_speed, 10.0 * delta)
+	var actual_moved := (global_position - _prev_actual_pos).length() / max(delta, 0.001)
+	_prev_actual_pos = global_position
+	_speed_smooth = lerp(_speed_smooth, actual_moved, 10.0 * delta)
 
 	_update_animation()
 
