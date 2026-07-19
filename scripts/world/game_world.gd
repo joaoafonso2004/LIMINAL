@@ -618,8 +618,6 @@ var _downed_status: Label = null
 var _downed_bar: ProgressBar = null
 
 func _on_net_message(type: String, msg: Dictionary, from_player: int) -> void:
-	# Debug: see all incoming messages in the console
-	print("[NET] type=%s from=%d" % [type, from_player])
 	match type:
 		"pos":
 			var rp = _remote_players.get(from_player)
