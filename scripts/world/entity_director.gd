@@ -568,15 +568,21 @@ func _tick_peek(delta: float) -> void:
 		_prox_muffle = prox
 		muffle.emit(prox)
 
-	# INSTANT RETREAT ON VISIBILITY / LOOK:
-	# The split second the peeking head enters view or is looked at, recede immediately!
+	# Reaction gaze window: 0.18s eye contact so player clearly sees the head
+	var staring := false
 	if (visible_now or looked) and not _peek_recede:
-		_peek_recede = true
-		_lean_dir = -1.0
-		_stare_breath(flat.length())
-		_add_stress(0.12)
-		if has_node("/root/AudioManager"):
-			AudioManager.set_heartbeat_state("peek")
+		if _stare_timer < 0.0:
+			_stare_timer = 0.18  # sweet spot eye-contact reaction duration
+			_stare_breath(flat.length())
+			_add_stress(0.12)
+			if has_node("/root/AudioManager"):
+				AudioManager.set_heartbeat_state("peek")
+		if _stare_timer > 0.0:
+			_stare_timer = maxf(0.0, _stare_timer - delta)
+			staring = _stare_timer > 0.0
+		if not staring:
+			_peek_recede = true
+			_lean_dir = -1.0
 
 	if _peek_corner:
 		if not _peek_recede:
@@ -584,7 +590,7 @@ func _tick_peek(delta: float) -> void:
 			_lean = clampf(_lean + _lean_dir * delta / 0.7, 0.0, 1.0)
 			_figure.global_position = _peek_from
 			_face_player(_figure)
-			_set_figure_alpha(clampf(_lean, 0.0, 1.0))
+			_set_figure_alpha(1.0)
 		
 		if _peek_timer <= 0.0 and not _peek_recede:
 			_peek_recede = true
@@ -593,12 +599,13 @@ func _tick_peek(delta: float) -> void:
 	if _peek_recede:
 		if _peek_corner:
 			_lean_dir = -1.0
-			# Ultra-fast duck back (0.12s)
-			_lean = clampf(_lean + _lean_dir * delta / 0.12, 0.0, 1.0)
+			# Smooth stealthy duck back behind wall (0.45s sweet spot)
+			_lean = clampf(_lean + _lean_dir * delta / 0.45, 0.0, 1.0)
 			_figure.global_position = _peek_from
 			_face_player(_figure)
-			# Alpha tied to lean — vanishes instantly as head retracts
-			_set_figure_alpha(clampf(_lean, 0.0, 1.0))
+			# Stay visible while head pulls back behind cover, then fade at lean 0
+			var alpha_val := 1.0 if _lean > 0.05 else (_lean / 0.05)
+			_set_figure_alpha(clampf(alpha_val, 0.0, 1.0))
 			
 			if _lean <= 0.0:
 				if _peek_loop_count >= 1:
@@ -609,6 +616,7 @@ func _tick_peek(delta: float) -> void:
 					_peek_loop_count += 1
 					_peek_wait_timer = _rng.randf_range(1.5, 3.0)
 					_peek_recede = false
+					_stare_timer = -1.0
 					_lean = 0.0
 					_lean_dir = 0.0
 					_set_figure_alpha(0.0)
