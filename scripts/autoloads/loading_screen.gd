@@ -179,37 +179,62 @@ func _build_ui() -> void:
 	band.anchor_right = 0.5
 	band.anchor_top = 1.0
 	band.anchor_bottom = 1.0
-	band.offset_left = -360
-	band.offset_right = 360
-	band.offset_top = -160
-	band.offset_bottom = -40
+	band.offset_left = -400
+	band.offset_right = 400
+	band.offset_top = -180
+	band.offset_bottom = -30
 
 	var vbox := VBoxContainer.new()
 	band.add_child(vbox)
 	vbox.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	vbox.add_theme_constant_override("separation", 12)
+	vbox.add_theme_constant_override("separation", 10)
+
+	# Creator Tag
+	var creator := Label.new()
+	creator.text = "Created by João Afonso"
+	creator.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	creator.add_theme_color_override("font_color", Color(0.95, 0.82, 0.45, 0.9))
+	creator.add_theme_font_size_override("font_size", 16)
+	vbox.add_child(creator)
+
+	# Backrooms Tip
+	var tips := [
+		"TIP: Do not stare into dark corridor corners for too long.",
+		"TIP: Hold your breath (Space / RMB) inside lockers when the entity is near.",
+		"TIP: Crouching muffles your footsteps and reduces entity detection range.",
+		"TIP: If you hear buzzing fluorescent lights, something is lurking nearby."
+	]
+	var tip_label := Label.new()
+	tip_label.text = tips[randi() % tips.size()]
+	tip_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	tip_label.add_theme_color_override("font_color", Color(0.8, 0.76, 0.62, 0.75))
+	tip_label.add_theme_font_size_override("font_size", 15)
+	vbox.add_child(tip_label)
 
 	_status = Label.new()
-	_status.text = "Loading..."
+	_status.text = "Loading... 0%"
 	_status.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_status.add_theme_color_override("font_color", Color(0.95, 0.9, 0.75, 1.0))
+	_status.add_theme_font_size_override("font_size", 18)
 	vbox.add_child(_status)
 
-	# ProgressBar with explicit StyleBoxFlat overrides. The kit theme.tres
-	# may not ship a ProgressBar style, in which case the default Godot
-	# fill renders grey-on-grey and the bar looks stuck at 0%. Accent
-	# comes from theme.tres "ProgressBar/fill" if available; else default.
 	var accent := _resolve_accent()
 	_progress = ProgressBar.new()
 	_progress.min_value = 0.0
 	_progress.max_value = 1.0
 	_progress.show_percentage = false
-	_progress.custom_minimum_size = Vector2(0, 22)
+	_progress.custom_minimum_size = Vector2(0, 18)
 	var pb_bg := StyleBoxFlat.new()
-	pb_bg.bg_color = DEFAULT_BG
-	pb_bg.set_corner_radius_all(6)
+	pb_bg.bg_color = Color(0.06, 0.06, 0.08, 0.9)
+	pb_bg.border_width_left = 1
+	pb_bg.border_width_top = 1
+	pb_bg.border_width_right = 1
+	pb_bg.border_width_bottom = 1
+	pb_bg.border_color = Color(0.3, 0.26, 0.18, 0.6)
+	pb_bg.set_corner_radius_all(4)
 	var pb_fill := StyleBoxFlat.new()
-	pb_fill.bg_color = accent
-	pb_fill.set_corner_radius_all(6)
+	pb_fill.bg_color = Color(0.96, 0.75, 0.35, 1.0)
+	pb_fill.set_corner_radius_all(4)
 	_progress.add_theme_stylebox_override("background", pb_bg)
 	_progress.add_theme_stylebox_override("fill", pb_fill)
 	vbox.add_child(_progress)

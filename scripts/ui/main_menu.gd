@@ -86,8 +86,25 @@ func _build_ui() -> void:
 	tagline.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP)
 	tagline.offset_left = -400.0
 	tagline.offset_right = 400.0
-	tagline.offset_top = 312.0
-	tagline.offset_bottom = 342.0
+	tagline.offset_top = 305.0
+	tagline.offset_bottom = 330.0
+
+	# Author Credit — "Made by João Afonso"
+	var author := Label.new()
+	author.name = "AuthorCredit"
+	author.text = "Made by João Afonso"
+	author.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	author.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	author.add_theme_color_override("font_color", Color(0.95, 0.82, 0.45, 0.9))
+	author.add_theme_font_size_override("font_size", 16)
+	if font:
+		author.add_theme_font_override("font", font)
+	add_child(author)
+	author.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP)
+	author.offset_left = -300.0
+	author.offset_right = 300.0
+	author.offset_top = 332.0
+	author.offset_bottom = 356.0
 
 	# Lower-middle menu column.
 	var menu := VBoxContainer.new()
