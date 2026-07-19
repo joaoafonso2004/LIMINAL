@@ -76,8 +76,7 @@ Projeto **Godot 4** (testado com 4.6.1, renderer Compatibility/WebGL2).
 
 Os valores de pacing/dificuldade/atmosfera estão centralizados em
 [`scripts/tuning.gd`](scripts/tuning.gd) e documentados em
-[`docs/design/game-design.md`](docs/design/game-design.md). A visão do jogo e o
-mapa de sistemas estão em [`CLAUDE.md`](CLAUDE.md).
+[`docs/design/game-design.md`](docs/design/game-design.md).
 
 ## Créditos
 
