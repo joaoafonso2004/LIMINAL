@@ -69,38 +69,55 @@ func _generate_spawn_cells() -> Array[Vector2i]:
 	else:
 		rng.randomize()
 		
-	# Generate 5 unique spawn cells within map boundaries
-	var attempts := 0
-	while cells.size() < TOTAL and attempts < 2000:
-		attempts += 1
-		var x := rng.randi_range(-15, 15)
-		var y := rng.randi_range(-15, 15)
-		var c := Vector2i(x, y)
-		
-		# Avoid starting room (radius 3)
-		if abs(x) <= 3 and abs(y) <= 3:
-			continue
+	# 5 Sectors: NW, NE, SW, SE, and Center/Outer
+	var sectors := [
+		[Rect2i(-14, 4, 11, 11), "NW"],
+		[Rect2i(4, 4, 11, 11), "NE"],
+		[Rect2i(-14, -14, 11, 11), "SW"],
+		[Rect2i(4, -14, 11, 11), "SE"],
+		[Rect2i(-13, -13, 26, 26), "Outer"]
+	]
+	
+	for sec in sectors:
+		var rect: Rect2i = sec[0]
+		var found := false
+		var attempts := 0
+		while not found and attempts < 400:
+			attempts += 1
+			var x := rng.randi_range(rect.position.x, rect.position.x + rect.size.x - 1)
+			var y := rng.randi_range(rect.position.y, rect.position.y + rect.size.y - 1)
+			var c := Vector2i(x, y)
 			
-		# Avoid duplicate entries
-		if cells.has(c):
-			continue
-			
-		# Ensure it's not the exit cell or close to the exit
-		if c.distance_squared_to(Vector2i(14, -16)) < 9:
-			continue
-			
-		# Verify it's an open cell in the maze layout (less than 4 walls)
-		if _maze and _maze.has_method("is_cell_open"):
-			if not _maze.is_cell_open(c):
+			# Avoid starting room (radius 3)
+			if abs(x) <= 3 and abs(y) <= 3:
 				continue
 				
-		cells.append(c)
-		
+			# Avoid exit cell neighborhood
+			if c.distance_squared_to(Vector2i(14, -16)) < 9:
+				continue
+				
+			# Verify distance from all existing cells (min 9 cells / 36 meters)
+			var too_close := false
+			for existing in cells:
+				if existing.distance_to(c) < 9.0:
+					too_close = true
+					break
+			if too_close:
+				continue
+				
+			# Verify it's an open cell in the maze layout
+			if _maze and _maze.has_method("is_cell_open"):
+				if not _maze.is_cell_open(c):
+					continue
+					
+			cells.append(c)
+			found = true
+			
 	# Fallback if generation failed
 	if cells.size() < TOTAL:
 		cells = [
-			Vector2i(9, 2), Vector2i(-3, 10), Vector2i(-11, -4),
-			Vector2i(6, -12), Vector2i(-9, 7)
+			Vector2i(10, 8), Vector2i(-9, 10), Vector2i(-11, -8),
+			Vector2i(8, -12), Vector2i(-8, 3)
 		]
 	return cells
 
