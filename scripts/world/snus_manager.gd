@@ -10,7 +10,10 @@ signal all_collected()
 const TOTAL := 5
 const CELL := 4.0                 # must match maze_manager CELL
 const PICKUP_RANGE := 2.2
-const SNUS_PATH := "res://assets/props/items/snus_box.glb"
+# Tins beyond the streamed-wall horizon (VIEW_RADIUS 6 cells ≈ 24 m) would
+# float visibly in the unbuilt void — cap their visibility safely inside it.
+const VISIBLE_RANGE := 18.0
+const SNUS_PATH := "res://assets/props/items/SNUS.glb"
 const PICKUP_SFX := "res://assets/audio/sfx/pickup/pickup_snus_pickup.mp3"
 const UNLOCK_SFX := "res://assets/audio/sfx/pickup/pickup_escape_unlocked.mp3"
 
@@ -23,6 +26,7 @@ const SPAWN_CELLS := [
 
 var _players: Array[Node3D] = []      # local + remote bodies to test proximity against
 var _local_player: Node3D = null
+var _maze: Node3D = null
 var _boxes: Dictionary = {}           # id:int -> Node3D
 var _collected: Dictionary = {}       # id:int -> true
 var _snus_scene: PackedScene = null
@@ -31,8 +35,9 @@ var _unlock_stream: AudioStream = null
 var _time := 0.0
 
 
-func setup(local_player: Node3D) -> void:
+func setup(local_player: Node3D, maze: Node3D) -> void:
 	_local_player = local_player
+	_maze = maze
 
 
 func _ready() -> void:
@@ -51,9 +56,59 @@ func register_player_body(body: Node3D) -> void:
 		_players.append(body)
 
 
+func _generate_spawn_cells() -> Array[Vector2i]:
+	var cells: Array[Vector2i] = []
+	var rng := RandomNumberGenerator.new()
+	
+	# Determine seed from NetManager room code or randomize for single player
+	var seed_val := 0
+	if has_node("/root/NetManager") and NetManager.is_multiplayer and NetManager.room_code != "":
+		for byte in NetManager.room_code.to_utf8_buffer():
+			seed_val = (seed_val * 33 + byte) & 0xFFFFFFFF
+		rng.seed = seed_val
+	else:
+		rng.randomize()
+		
+	# Generate 5 unique spawn cells within map boundaries
+	var attempts := 0
+	while cells.size() < TOTAL and attempts < 2000:
+		attempts += 1
+		var x := rng.randi_range(-15, 15)
+		var y := rng.randi_range(-15, 15)
+		var c := Vector2i(x, y)
+		
+		# Avoid starting room (radius 3)
+		if abs(x) <= 3 and abs(y) <= 3:
+			continue
+			
+		# Avoid duplicate entries
+		if cells.has(c):
+			continue
+			
+		# Ensure it's not the exit cell or close to the exit
+		if c.distance_squared_to(Vector2i(14, -16)) < 9:
+			continue
+			
+		# Verify it's an open cell in the maze layout (less than 4 walls)
+		if _maze and _maze.has_method("is_cell_open"):
+			if not _maze.is_cell_open(c):
+				continue
+				
+		cells.append(c)
+		
+	# Fallback if generation failed
+	if cells.size() < TOTAL:
+		cells = [
+			Vector2i(9, 2), Vector2i(-3, 10), Vector2i(-11, -4),
+			Vector2i(6, -12), Vector2i(-9, 7)
+		]
+	return cells
+
+
 func _spawn_all() -> void:
-	for i in SPAWN_CELLS.size():
-		var cell: Vector2i = SPAWN_CELLS[i]
+	var spawn_cells := _generate_spawn_cells()
+	for i in spawn_cells.size():
+		var cell: Vector2i = spawn_cells[i]
 		var pos := Vector3(cell.x * CELL, 0.0, cell.y * CELL)
 		_spawn_box(i, pos)
 
@@ -67,28 +122,34 @@ func _spawn_box(id: int, pos: Vector3) -> void:
 	if _snus_scene:
 		var model: Node3D = _snus_scene.instantiate()
 		root.add_child(model)
-		ModelUtils.scale_to_height(model, 0.12)
+		# SNUS.glb is a disc standing on edge in source units. Scale it to a
+		# 0.38m diameter, then lay it FLAT on the carpet like a dropped tin —
+		# big enough that a walking player reads it without a hud marker.
+		ModelUtils.scale_to_height(model, 0.38)
+		model.rotation_degrees.x = 90.0
 		ModelUtils.ground_model(model, 0.0)
-		# lift onto a subtle pedestal-of-nothing at ankle height so it reads
-		root.position.y = 0.15
+		ModelUtils.generate_normals_for_all(model)
+		_ensure_tin_material(model)
 	else:
 		var mi := MeshInstance3D.new()
 		var cyl := CylinderMesh.new()
-		cyl.top_radius = 0.09
-		cyl.bottom_radius = 0.09
-		cyl.height = 0.05
+		cyl.top_radius = 0.19
+		cyl.bottom_radius = 0.19
+		cyl.height = 0.07
 		mi.mesh = cyl
 		var mat := StandardMaterial3D.new()
 		mat.albedo_color = Color(0.5, 0.42, 0.28)
 		mi.material_override = mat
+		mi.position.y = 0.035
 		root.add_child(mi)
-		root.position.y = 0.2
 
-	# A soft glow so the tin is findable in the gloom without a HUD marker.
+	# The faintest halo, readable only up close — a tin in a dark room is
+	# NOT visible from across the floor; the phone radar is how you hunt them.
 	var glow := OmniLight3D.new()
+	glow.name = "SnusGlow"
 	glow.light_color = Color(1.0, 0.9, 0.55)
-	glow.light_energy = 0.9
-	glow.omni_range = 3.2
+	glow.light_energy = 0.35
+	glow.omni_range = 1.8
 	glow.shadow_enabled = false
 	glow.position = Vector3(0, 0.4, 0)
 	root.add_child(glow)
@@ -96,16 +157,61 @@ func _spawn_box(id: int, pos: Vector3) -> void:
 	_boxes[id] = root
 
 
+const LID_TEX := "res://assets/textures/props/snus_pablo_lid.png"
+
+## SNUS.glb ships with no materials at all (mesh only) — without this it
+## renders flat default-white. Dress bare meshes with the Pablo-style lid
+## label, triplanar-projected (the mesh may carry no UVs); meshes that DO
+## have a material are left untouched.
+func _ensure_tin_material(model: Node3D) -> void:
+	var tin: StandardMaterial3D = null
+	for child in model.find_children("*", "MeshInstance3D"):
+		var mi := child as MeshInstance3D
+		if mi == null or mi.mesh == null:
+			continue
+		
+		# If the mesh has an active material from the GLB, duplicate and override it
+		# to set metallic=0.0 and roughness=0.85 (high metallic in a scene without reflection probes
+		# renders pitch black because it reflects the black void outer bounds).
+		var bare := true
+		for s in mi.mesh.get_surface_count():
+			var mat = mi.get_active_material(s)
+			if mat is BaseMaterial3D:
+				bare = false
+				var unique_mat = mat.duplicate() as BaseMaterial3D
+				unique_mat.metallic = 0.0
+				unique_mat.roughness = 0.85
+				mi.set_surface_override_material(s, unique_mat)
+				
+		if not bare:
+			continue
+			
+		if tin == null:
+			tin = StandardMaterial3D.new()
+			tin.metallic = 0.0
+			tin.roughness = 0.85
+			if ResourceLoader.exists(LID_TEX):
+				tin.albedo_texture = load(LID_TEX)
+				# source mesh spans ~±1 unit → map the label once across it
+				tin.uv1_triplanar = true
+				tin.uv1_scale = Vector3(0.5, 0.5, 0.5)
+				tin.uv1_offset = Vector3(0.5, 0.5, 0.5)
+			else:
+				tin.albedo_color = Color(0.16, 0.15, 0.13)
+		mi.material_override = tin
+
+
 func _process(delta: float) -> void:
 	_time += delta
-	# gentle bob + spin so tins catch the eye
+	# Slow spin only — the tin sits ON the floor, never floats. (The old bob
+	# fought ground_model and made it hover.) Tins outside the built world
+	# stay invisible so they never ghost through the unrendered dark.
 	for id in _boxes:
 		var b: Node3D = _boxes[id]
 		if is_instance_valid(b):
-			b.rotation.y += delta * 1.2
-			for c in b.get_children():
-				if c is Node3D and not (c is OmniLight3D):
-					(c as Node3D).position.y = 0.02 * sin(_time * 2.0 + float(id))
+			b.rotation.y += delta * 0.9
+			if is_instance_valid(_local_player):
+				b.visible = b.global_position.distance_to(_local_player.global_position) < VISIBLE_RANGE
 
 	# Local proximity pickup on E.
 	if is_instance_valid(_local_player) and Input.is_action_just_pressed("interact"):
@@ -161,3 +267,24 @@ func remote_collect(id: int) -> void:
 
 func get_collected() -> int:
 	return _collected.size()
+
+func get_nearest_uncollected_pos(from: Vector3) -> Vector3:
+	var best_pos := Vector3.ZERO
+	var best_d := 999999.0
+	for id in _boxes:
+		if _collected.has(id):
+			continue
+		var b: Node3D = _boxes[id]
+		if not is_instance_valid(b):
+			continue
+		# Compute 3D distance
+		var d := from.distance_to(b.global_position)
+		if d < best_d:
+			best_d = d
+			best_pos = b.global_position
+	return best_pos
+
+
+func is_snus_in_range(from: Vector3) -> bool:
+	return _nearest_uncollected(from) >= 0
+

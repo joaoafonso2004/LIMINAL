@@ -10,13 +10,11 @@ const BG_PATH: String = "res://assets/textures/backgrounds/menu_void_corridor.pn
 const WORDMARK_PATH: String = "res://assets/ui/wordmark_title.png"
 const THEME_PATH: String = "res://assets/ui/theme.tres"
 const FONT_PATH: String = "res://assets/fonts/special_elite.ttf"
-const BTN_STYLE: String = "res://assets/ui/btn_main.tres"
 const MUSIC_PATH: String = "res://assets/audio/music/music_exploration_liminal_dread_theme.mp3"
 
 const DIM_YELLOW: Color = Color(0.72, 0.66, 0.42)
 
 var _font: Font = null
-var _btn_style: StyleBox = null
 var _wordmark: TextureRect = null
 
 var _main_col: VBoxContainer = null
@@ -32,8 +30,6 @@ func _ready() -> void:
 		theme = load(THEME_PATH)
 	if ResourceLoader.exists(FONT_PATH):
 		_font = load(FONT_PATH)
-	if ResourceLoader.exists(BTN_STYLE):
-		_btn_style = load(BTN_STYLE)
 
 	_build_backdrop()
 	_build_wordmark()
@@ -86,22 +82,14 @@ func _build_wordmark() -> void:
 
 
 func _make_art_button(label: String, w: float = 288.0) -> Button:
-	# Uses the kit button art with baked chrome; label drawn on top in font.
+	# Flat code-styled button (the kit art has "ENTER" baked in — unusable
+	# for anything but that one label; see UIKit).
 	var b := Button.new()
 	b.text = label
-	b.custom_minimum_size = Vector2(w, 84)
+	b.custom_minimum_size = Vector2(w, 72)
 	b.focus_mode = Control.FOCUS_NONE
 	b.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	if _btn_style:
-		for st in ["normal", "hover", "pressed", "focus", "disabled"]:
-			b.add_theme_stylebox_override(st, _btn_style)
-	if _font:
-		b.add_theme_font_override("font", _font)
-	b.add_theme_font_size_override("font_size", 26)
-	b.add_theme_color_override("font_color", Color(0.93, 0.88, 0.66))
-	b.add_theme_color_override("font_hover_color", Color(1, 0.97, 0.8))
-	b.mouse_entered.connect(func(): b.modulate = Color(1.08, 1.08, 1.08))
-	b.mouse_exited.connect(func(): b.modulate = Color(1, 1, 1))
+	UIKit.style_button(b, _font, 26)
 	return b
 
 
@@ -253,8 +241,8 @@ func _connect_lobby_signals() -> void:
 		NetManager.player_joined.connect(_on_player_joined)
 	if not NetManager.room_error.is_connected(_on_room_error):
 		NetManager.room_error.connect(_on_room_error)
-	if not NetManager.all_players_joined.is_connected(_start_game):
-		NetManager.all_players_joined.connect(_start_game, CONNECT_ONE_SHOT)
+	if not NetManager.all_players_joined.is_connected(_on_all_players_joined):
+		NetManager.all_players_joined.connect(_on_all_players_joined, CONNECT_ONE_SHOT)
 
 
 func _on_room_error(reason: String) -> void:
@@ -263,14 +251,29 @@ func _on_room_error(reason: String) -> void:
 
 
 func _on_room_created(code: String) -> void:
-	_set_status("Room code:  " + code + "\nWaiting for friends… (starts when the room is full)")
+	_set_status("Room code:  " + code + "\nWaiting for friends… (starts when the room is full)\nPlayers: 1 / " + str(NetManager.max_players))
 
 
-func _on_player_joined(_pid: int, total: int) -> void:
-	if total < NetManager.max_players:
-		_set_status("Room code:  " + NetManager.room_code + "\n" + str(total) + " / " + str(NetManager.max_players) + " here… waiting for the rest.")
+func _on_player_joined(pid: int, total: int) -> void:
+	if NetManager.is_host:
+		if total > 1:
+			_set_status("Room code:  " + NetManager.room_code + "\n[!] A new player joined the session!\nTotal players in session: " + str(total) + " / " + str(NetManager.max_players))
+			# Play a nice pickup notification chime!
+			if has_node("/root/AudioManager"):
+				var chime = load("res://assets/audio/sfx/pickup/pickup_snus_pickup.mp3")
+				AudioManager.play_sfx(chime, 0.0, 1.2)
+		else:
+			_set_status("Room code:  " + NetManager.room_code + "\nWaiting for friends… (starts when the room is full)\nTotal players: 1 / " + str(NetManager.max_players))
 	else:
-		_set_status("Everyone's in. Descending…")
+		_set_status("Joined room:  " + NetManager.room_code + "\nConnected to session! Total players: " + str(total) + " / " + str(NetManager.max_players))
+		if has_node("/root/AudioManager"):
+			var chime = load("res://assets/audio/sfx/pickup/pickup_snus_pickup.mp3")
+			AudioManager.play_sfx(chime, -2.0, 1.0)
+
+
+func _on_all_players_joined() -> void:
+	_set_status("Everyone's in! Descending into the Backrooms…")
+	get_tree().create_timer(1.2).timeout.connect(_start_game)
 
 
 func _on_join(code_input: LineEdit) -> void:

@@ -7,10 +7,10 @@ const PLAYER_SCRIPT := "res://scripts/player/player_controller.gd"
 const OVERLAY_SCRIPT := "res://scripts/ui/overlay.gd"
 
 const HUM_PATH := "res://assets/audio/ambient/ambient_backrooms_office_fluorescent_hum_loop.mp3"
-const HVAC_PATH := "res://assets/audio/ambient/ambient_empty_building_hvac_drone_loop.mp3"
+const HVAC_PATH := ""
 # The menu theme, pitched way down, doubles as the deep dark room-tone drone
 # (A24 Backrooms-ambience vibe) — unrecognizable at 0.72x and costs no new asset.
-const DRONE_PATH := "res://assets/audio/music/music_exploration_liminal_dread_theme.mp3"
+const DRONE_PATH := ""
 const FINAL_MUSIC := "res://assets/audio/music/music_climax_final_exit_drone.mp3"
 
 # Timings (seconds) — pacing knobs live in scripts/tuning.gd
@@ -46,6 +46,12 @@ var _remote_players: Dictionary = {}   # player_id -> remote body
 var _remote_down: Dictionary = {}      # player_id -> true (caught or disconnected)
 var _local_is_down := false
 var _snus_ui: CanvasLayer = null
+var _distant_sound_timer := 20.0
+var _phone_scare_cd := 0.0             # trapped phones can't chain-scare
+var _radar_timer := 0.0
+var _radar_ping_cd := 0.0
+var _interact_prompt: Label = null
+var _interact_canvas: CanvasLayer = null
 
 func _ready() -> void:
 	_is_mp = has_node("/root/NetManager") and NetManager.is_multiplayer
@@ -63,6 +69,7 @@ func _ready() -> void:
 	_spawn_pause()
 	_spawn_snus()
 	_spawn_snus_ui()
+	_setup_interact_prompt()
 	_setup_ambient()
 	if _is_mp:
 		_setup_multiplayer()
@@ -89,8 +96,8 @@ func _setup_environment() -> void:
 	env.glow_bloom = 0.3
 	env.glow_blend_mode = Environment.GLOW_BLEND_MODE_SOFTLIGHT
 	env.fog_enabled = true
-	env.fog_light_color = Color(0.03, 0.026, 0.018)
-	env.fog_light_energy = 0.08
+	env.fog_light_color = Color(0.42, 0.37, 0.27)
+	env.fog_light_energy = 0.6
 	env.fog_density = Tuning.FOG_DENSITY
 	env.fog_sky_affect = 0.0
 	env.adjustment_enabled = true
@@ -126,7 +133,7 @@ func _spawn_snus() -> void:
 	_snus = Node3D.new()
 	_snus.set_script(load("res://scripts/world/snus_manager.gd"))
 	add_child(_snus)
-	_snus.setup(_player)
+	_snus.setup(_player, _maze)
 	if _snus.has_signal("count_changed"):
 		_snus.count_changed.connect(_on_snus_count)
 	if _snus.has_signal("all_collected"):
@@ -137,6 +144,8 @@ func _spawn_entity() -> void:
 	_entity.set_script(load("res://scripts/world/entity_director.gd"))
 	add_child(_entity)
 	_entity.setup(_player, _camera, _maze)
+	if _is_mp and _entity.has_method("setup_mp"):
+		_entity.setup_mp(self, NetManager.is_host)
 	_entity.request_dread.connect(_on_dread)
 	_entity.request_flicker.connect(_on_flicker)
 	_entity.jumpscare.connect(_on_jumpscare)
@@ -235,6 +244,16 @@ func _process(delta: float) -> void:
 			AudioManager.play_music(load(FINAL_MUSIC), -16.0, 6.0)
 			AudioManager.set_music_volume(-6.0, 45.0)
 	_tick_secret(delta)
+	_phone_scare_cd = maxf(0.0, _phone_scare_cd - delta)
+	_tick_phone_interaction()
+	_update_interact_prompt(delta)
+	_tick_distant_laughs(delta)
+
+	if _radar_timer > 0.0:
+		_radar_timer -= delta
+		_radar_ping_cd -= delta
+		if _radar_ping_cd <= 0.0:
+			_play_radar_ping()
 
 func _tick_secret(delta: float) -> void:
 	if not is_instance_valid(_player):
@@ -269,9 +288,11 @@ func _on_flicker(v: float) -> void:
 
 func _on_jumpscare() -> void:
 	if _overlay and _overlay.has_method("pulse"):
-		_overlay.pulse(1.0)
+		_overlay.pulse(2.0)
 	if _overlay and _overlay.has_method("flash"):
 		_overlay.flash(Color(0, 0, 0, 0.6), 0.5)
+	if _maze and _maze.has_method("set_flicker"):
+		_maze.set_flicker(1.0)
 	# the ONLY sanctioned absolute silence: right after the scream
 	_duck_ambient(0.2, 2.4, 3.0)
 
@@ -319,6 +340,9 @@ func _on_exit_reached() -> void:
 func _on_snus_count(collected: int, total: int) -> void:
 	if _snus_ui and _snus_ui.has_method("set_count"):
 		_snus_ui.set_count(collected, total)
+	# every tin taken makes it angrier — shared pickups, shared difficulty
+	if _entity and _entity.has_method("set_menace"):
+		_entity.set_menace(float(collected) / float(maxi(total, 1)))
 
 func _on_snus_all() -> void:
 	if _snus_done:
@@ -398,6 +422,18 @@ func _on_net_message(type: String, msg: Dictionary, from_player: int) -> void:
 			# A teammate stood too still in a wrong room — the team ends with them.
 			if not _ended:
 				_end_run("secret")
+		"scare":
+			# The host assigned US the next scare — our camera realizes it.
+			if int(msg.get("target", -1)) == NetManager.local_player_id \
+					and _entity and _entity.has_method("remote_scare"):
+				_entity.remote_scare(str(msg.get("kind", "peek")))
+		"fig":
+			# A teammate's scare is live — render the same entity here.
+			if _entity and _entity.has_method("mirror_update"):
+				_entity.mirror_update(msg)
+		"figoff":
+			if _entity and _entity.has_method("mirror_off"):
+				_entity.mirror_off()
 
 func _on_player_disconnected(pid: int) -> void:
 	var rp = _remote_players.get(pid)
@@ -412,6 +448,8 @@ func _on_player_disconnected(pid: int) -> void:
 func _local_down() -> void:
 	# Local player caught in co-op: freeze + fade, but keep watching the team.
 	_local_is_down = true
+	if is_instance_valid(_camera):
+		_camera.fov = 72.0   # undo the kill close-up zoom for spectating
 	if is_instance_valid(_player) and _player.has_method("set_frozen"):
 		_player.set_frozen(true)
 	if _overlay and _overlay.has_method("fade_to"):
@@ -422,6 +460,21 @@ func _local_down() -> void:
 			Color(0, 0, 0, 0.82),
 			Color(0.7, 0.66, 0.42))
 	_check_all_down()
+
+## Relay used by the shared-entity director (and any future networked system).
+func net_send(type: String, data: Dictionary) -> void:
+	if _is_mp and has_node("/root/NetManager"):
+		NetManager.send(type, data)
+
+## Players still standing — the host's scare director picks targets from this.
+func alive_player_ids() -> Array:
+	var ids: Array = []
+	if not _local_is_down and has_node("/root/NetManager"):
+		ids.append(NetManager.local_player_id)
+	for pid in _remote_players.keys():
+		if not _remote_down.has(pid):
+			ids.append(int(pid))
+	return ids
 
 ## Every client runs this on the same shared facts (down + disconnect events).
 ## When no one is left standing, the run ends for everyone — no eternal
@@ -454,7 +507,7 @@ func _end_run(reason: String) -> void:
 			_ending_secret()
 
 func _ending_caught() -> void:
-	# hard cut to black + dead silence, the sentence, then restart
+	# hard cut to black + dead silence, the sentence, then the choice
 	if _overlay and _overlay.has_method("fade_to"):
 		_overlay.fade_to(Color(0, 0, 0, 1), 0.12)
 	if _hum:
@@ -470,9 +523,49 @@ func _ending_caught() -> void:
 			"Ele encontrou-te primeiro.",
 			Color(0, 0, 0),
 			Color(0.7, 0.66, 0.42))
-	await get_tree().create_timer(5.5).timeout
-	if has_node("/root/GameManager"):
-		GameManager.restart()
+	await get_tree().create_timer(2.8).timeout
+	_show_death_menu()
+
+## Three doors out of the dark: try again, main menu, quit.
+func _show_death_menu() -> void:
+	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+	var layer := CanvasLayer.new()
+	layer.layer = 30   # above the CRT filter and the ending text
+	add_child(layer)
+	var vb := VBoxContainer.new()
+	vb.alignment = BoxContainer.ALIGNMENT_CENTER
+	vb.add_theme_constant_override("separation", 14)
+	layer.add_child(vb)
+	vb.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
+	vb.offset_top = 90.0
+	vb.offset_bottom = 330.0
+	vb.offset_left = -160.0
+	vb.offset_right = 160.0
+
+	var font: Font = null
+	if ResourceLoader.exists("res://assets/fonts/special_elite.ttf"):
+		font = load("res://assets/fonts/special_elite.ttf")
+
+	var entries: Array = [
+		["TRY AGAIN", func():
+			if has_node("/root/GameManager"):
+				GameManager.restart()],
+		["MAIN MENU", func():
+			if has_node("/root/GameManager"):
+				GameManager.to_menu()],
+	]
+	if not OS.has_feature("web"):
+		entries.append(["QUIT", func(): get_tree().quit()])
+
+	for e in entries:
+		var b := Button.new()
+		b.text = e[0]
+		b.custom_minimum_size = Vector2(280, 62)
+		b.focus_mode = Control.FOCUS_NONE
+		b.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+		UIKit.style_button(b, font, 24)
+		b.pressed.connect(e[1])
+		vb.add_child(b)
 
 func _ending_exit() -> void:
 	if has_node("/root/AudioManager"):
@@ -509,3 +602,222 @@ func _ending_secret() -> void:
 	await get_tree().create_timer(9.0).timeout
 	if has_node("/root/GameManager"):
 		GameManager.to_menu()
+
+func _tick_phone_interaction() -> void:
+	if not is_instance_valid(_player) or not is_instance_valid(_maze):
+		return
+	if Input.is_action_just_pressed("interact"):
+		var px := int(floor(_player.global_position.x / 4.0 + 0.5))
+		var pz := int(floor(_player.global_position.z / 4.0 + 0.5))
+		var pcell := Vector2i(px, pz)
+		if _maze.has_method("get_phone_node_in_cell"):
+			var phone = _maze.get_phone_node_in_cell(pcell)
+			if is_instance_valid(phone):
+				var dist = _player.global_position.distance_to(phone.global_position)
+				if dist < 2.2:
+					_interact_with_phone(phone)
+
+## Answering a phone is a gamble. Every phone breathes at you — but what
+## follows depends on WHICH phone it is (fixed per phone, same for every
+## co-op client): some are radar phones (a red pulse marks the nearest tin
+## for a few seconds — a bearing, not a map), some are trapped (the entity
+## answers), and some just breathe and hang up.
+func _phone_fate(phone: Node3D) -> String:
+	var cx := int(floor(phone.global_position.x / 4.0 + 0.5))
+	var cz := int(floor(phone.global_position.z / 4.0 + 0.5))
+	var h := posmod(cx * 31 + cz * 17, 10)
+	if h <= 3:
+		return "radar"      # 40%
+	elif h <= 6:
+		return "scare"      # 30%
+	return "silence"        # 30%
+
+func _interact_with_phone(phone: Node3D) -> void:
+	if phone.has_meta("interacting") and phone.get_meta("interacting"):
+		return
+	phone.set_meta("interacting", true)
+
+	if not has_node("/root/AudioManager"):
+		return
+	var breath_stream = load("res://assets/audio/juanjo/juanjo_sound - Backrooms Entity 23.wav")
+	var click_stream = load("res://assets/audio/sfx/environment/environment_light_flicker_buzz.mp3")
+	var fate := _phone_fate(phone)
+
+	# Receiver pick-up click, then the breathing — every phone breathes.
+	AudioManager.play_sfx_3d(self, click_stream, phone.global_position, 0.0, 15.0, 1.2)
+	get_tree().create_timer(0.15).timeout.connect(func():
+		if not is_instance_valid(phone) or not has_node("/root/AudioManager"):
+			return
+		AudioManager.play_sfx_3d(self, breath_stream, phone.global_position, 8.0, 20.0, 0.85)
+		if _overlay and _overlay.has_method("pulse"):
+			_overlay.pulse(0.6)
+		if _maze and _maze.has_method("set_flicker"):
+			_maze.set_flicker(0.7)
+			get_tree().create_timer(1.4).timeout.connect(func():
+				if is_instance_valid(_maze) and _maze.has_method("set_flicker"):
+					_maze.set_flicker(0.0)
+			)
+
+		match fate:
+			"radar":
+				# A brief red pulse through the walls: direction, not location.
+				var nearest_pos := Vector3.ZERO
+				if _snus and _snus.has_method("get_nearest_uncollected_pos"):
+					nearest_pos = _snus.get_nearest_uncollected_pos(_player.global_position)
+				if nearest_pos != Vector3.ZERO:
+					_radar_timer = 16.0
+					_radar_ping_cd = 0.05  # start pinging immediately!
+					
+					var beacon := OmniLight3D.new()
+					beacon.light_color = Color(1.0, 0.15, 0.15)
+					beacon.light_energy = 9.0
+					beacon.omni_range = 35.0
+					beacon.shadow_enabled = false
+					add_child(beacon)
+					beacon.global_position = nearest_pos
+					get_tree().create_timer(3.5).timeout.connect(func():
+						if is_instance_valid(beacon):
+							beacon.queue_free()
+					)
+			"scare":
+				# Wrong number. It was already on the line.
+				if _phone_scare_cd <= 0.0:
+					_phone_scare_cd = 60.0
+					get_tree().create_timer(1.1).timeout.connect(func():
+						if _entity and _entity.has_method("phone_jumpscare"):
+							_entity.phone_jumpscare()
+					)
+			_:
+				pass  # just the breathing, then the line goes dead
+
+		get_tree().create_timer(1.8).timeout.connect(func():
+			if is_instance_valid(phone):
+				phone.set_meta("interacting", false)
+		)
+	)
+
+func _tick_distant_laughs(delta: float) -> void:
+	if not is_instance_valid(_player):
+		return
+	_distant_sound_timer -= delta
+	if _distant_sound_timer <= 0.0:
+		_distant_sound_timer = randf_range(20.0, 48.0)
+		_play_distant_laugh()
+
+func _play_distant_laugh() -> void:
+	if not is_instance_valid(_player) or not has_node("/root/AudioManager"):
+		return
+	var idx := randi_range(1, 30)
+	var path := "res://assets/audio/juanjo/juanjo_sound - Backrooms Entity %d.wav" % idx
+	if not ResourceLoader.exists(path):
+		return
+	
+	# Choose a random distant position (16 to 28 meters away)
+	var ang := randf() * TAU
+	var dist := randf_range(16.0, 28.0)
+	var offset := Vector3(cos(ang), 0, sin(ang)) * dist
+	var target_pos := _player.global_position + offset
+	target_pos.y = 1.2
+	
+	var stream = load(path)
+	var vol := randf_range(-14.0, -6.0)
+	AudioManager.play_sfx_3d(self, stream, target_pos, vol, 40.0, randf_range(0.9, 1.1))
+	
+	# Trigger a faint light flicker in the direction of the distant noise
+	if _maze and _maze.has_method("set_flicker"):
+		_maze.set_flicker(0.3)
+		get_tree().create_timer(0.6).timeout.connect(func():
+			if is_instance_valid(_maze) and _maze.has_method("set_flicker"):
+				_maze.set_flicker(0.0)
+		)
+
+
+func _play_radar_ping() -> void:
+	if not is_instance_valid(_player) or not has_node("/root/AudioManager"):
+		return
+	var nearest_pos := Vector3.ZERO
+	if _snus and _snus.has_method("get_nearest_uncollected_pos"):
+		nearest_pos = _snus.get_nearest_uncollected_pos(_player.global_position)
+	if nearest_pos == Vector3.ZERO:
+		_radar_timer = 0.0  # no tins left, shut off radar
+		return
+	
+	var dist := _player.global_position.distance_to(nearest_pos)
+	
+	# Faster ping rate the closer you are: from 1.8s (far) down to 0.38s (close)
+	var closeness := clampf(1.0 - (dist / 28.0), 0.0, 1.0)
+	_radar_ping_cd = lerpf(1.8, 0.38, closeness)
+	
+	# Higher pitch the closer you are!
+	var pitch := lerpf(1.5, 2.4, closeness)
+	# Muffled/quieter when crouching to stay stealthy
+	var vol := -17.5
+	if "is_crouching" in _player and _player.is_crouching:
+		vol = -24.0
+		pitch *= 0.8
+	
+	var ping_stream = load("res://assets/audio/sfx/pickup/pickup_snus_pickup.mp3")
+	AudioManager.play_sfx(ping_stream, vol, pitch)
+
+
+func _setup_interact_prompt() -> void:
+	_interact_canvas = CanvasLayer.new()
+	_interact_canvas.layer = 5   # below overlay
+	add_child(_interact_canvas)
+	
+	_interact_prompt = Label.new()
+	_interact_prompt.name = "InteractPrompt"
+	_interact_prompt.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_interact_prompt.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	
+	# Premium HUD typography & outline shadow
+	_interact_prompt.text = "[E] INTERACT"
+	_interact_prompt.add_theme_font_size_override("font_size", 18)
+	_interact_prompt.add_theme_color_override("font_color", Color(0.96, 0.94, 0.88))
+	_interact_prompt.add_theme_color_override("font_shadow_color", Color(0.0, 0.0, 0.0, 0.85))
+	_interact_prompt.add_theme_constant_override("shadow_offset_x", 1)
+	_interact_prompt.add_theme_constant_override("shadow_offset_y", 1)
+	_interact_prompt.add_theme_constant_override("shadow_outline_size", 3)
+	
+	_interact_canvas.add_child(_interact_prompt)
+	_interact_prompt.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_WIDE)
+	# Position it slightly above the screen bottom (around 120 pixels up)
+	_interact_prompt.position.y -= 130.0
+	
+	# Start invisible
+	_interact_prompt.modulate.a = 0.0
+
+
+func _update_interact_prompt(delta: float) -> void:
+	if not is_instance_valid(_player) or _interact_prompt == null:
+		return
+		
+	var target_text := ""
+	var in_range := false
+	
+	# 1. Check SNUS proximity
+	if _snus and _snus.has_method("is_snus_in_range"):
+		if _snus.is_snus_in_range(_player.global_position):
+			target_text = "[E] GRAB SNUS"
+			in_range = true
+			
+	# 2. Check Telephone proximity (if SNUS isn't already taking priority)
+	if not in_range:
+		var px := int(floor(_player.global_position.x / 4.0 + 0.5))
+		var pz := int(floor(_player.global_position.z / 4.0 + 0.5))
+		var pcell := Vector2i(px, pz)
+		if _maze and _maze.has_method("get_phone_node_in_cell"):
+			var phone = _maze.get_phone_node_in_cell(pcell)
+			if is_instance_valid(phone):
+				var dist = _player.global_position.distance_to(phone.global_position)
+				if dist < 2.2:
+					if not phone.has_meta("interacting") or not phone.get_meta("interacting"):
+						target_text = "[E] ANSWER TELEPHONE"
+						in_range = true
+						
+	# Respond instantly and smoothly fade
+	if in_range:
+		_interact_prompt.text = target_text
+		_interact_prompt.modulate.a = lerpf(_interact_prompt.modulate.a, 1.0, 16.0 * delta)
+	else:
+		_interact_prompt.modulate.a = lerpf(_interact_prompt.modulate.a, 0.0, 16.0 * delta)

@@ -66,6 +66,8 @@ interact={
 renderer/rendering_method="gl_compatibility"
 anti_aliasing/quality/msaa_3d=2
 anti_aliasing/quality/msaa_2d=0
+limits/opengl/max_renderable_lights=64
+limits/opengl/max_lights_per_object=16
 
 
 textures/default_texture_filter=3

@@ -49,24 +49,10 @@ func _create_players() -> void:
 		sfx_players.append(p)
 
 func play_music(stream: AudioStream, volume_db: float = -6.0, fade_in: float = 0.0) -> void:
-	if stream == null:
-		return
-	if not _unlocked:
-		_pending_music = stream
-		_pending_music_vol = volume_db
-		_pending_music_fade = fade_in
-		return
-	_play_music_now(stream, volume_db, fade_in)
+	return
 
 func _play_music_now(stream: AudioStream, volume_db: float, fade_in: float = 0.0) -> void:
-	music_player.stream = stream
-	if fade_in > 0.0:
-		music_player.volume_db = -40.0
-		music_player.play()
-		create_tween().tween_property(music_player, "volume_db", volume_db, fade_in)
-	else:
-		music_player.volume_db = volume_db
-		music_player.play()
+	return
 
 func fade_out_music(dur: float = 1.5) -> void:
 	if music_player and music_player.playing:
