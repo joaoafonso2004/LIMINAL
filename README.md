@@ -1,6 +1,6 @@
 # LIMINAL
 
-![LIMINAL Banner](media/liminal_banner.png)
+![LIMINAL Banner](assets/ui/liminal_banner.png)
 
 ### **Made by João Afonso**
 

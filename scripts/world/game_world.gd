@@ -350,6 +350,7 @@ func _process(delta: float) -> void:
 			AudioManager.play_music(load(FINAL_MUSIC), -16.0, 6.0)
 			AudioManager.set_music_volume(-6.0, 45.0)
 	_tick_secret(delta)
+	_tick_downed_and_revive(delta)
 	_phone_scare_cd = maxf(0.0, _phone_scare_cd - delta)
 	_tick_phone_interaction()
 	_update_interact_prompt(delta)
@@ -360,6 +361,79 @@ func _process(delta: float) -> void:
 		_radar_ping_cd -= delta
 		if _radar_ping_cd <= 0.0:
 			_play_radar_ping()
+
+func _tick_downed_and_revive(delta: float) -> void:
+	# 1. Downed local player countdown & spectate live teammate
+	if _is_downed:
+		_bleedout_timer -= delta
+		if is_instance_valid(_downed_status):
+			_downed_status.text = "DOWNED — %.1fs LEFT TO REVIVE" % maxf(0.0, _bleedout_timer)
+		if is_instance_valid(_downed_bar):
+			_downed_bar.value = maxf(0.0, _bleedout_timer)
+			
+		# Spectate live teammate camera
+		var live_rp = _get_living_remote_player()
+		if is_instance_valid(live_rp) and is_instance_valid(_camera):
+			_camera.global_transform = _camera.global_transform.interpolate_with(live_rp.global_transform, 10.0 * delta)
+			
+		if _bleedout_timer <= 0.0:
+			# Bleedout expired -> permanent out of combat
+			_is_downed = false
+			_local_is_down = true
+			NetManager.send("down", {})
+			if is_instance_valid(_downed_canvas):
+				_downed_canvas.queue_free()
+				_downed_canvas = null
+			_check_all_down()
+			return
+
+	# 2. Living player reviving downed teammate (Hold E for 10 seconds)
+	if not _local_is_down and not _is_downed and _is_mp:
+		var downed_rp = _get_nearest_downed_remote_player()
+		if is_instance_valid(downed_rp):
+			var dist := _player.global_position.distance_to(downed_rp.global_position)
+			if dist < 2.5:
+				var holding_e := Input.is_action_pressed("interact")
+				if holding_e:
+					_revive_hold_timer += delta
+					NetManager.send("reviving", {"target": downed_rp.player_id, "prog": _revive_hold_timer})
+					if _interact_prompt:
+						_interact_prompt.text = "HOLD [E] TO REVIVE TEAMMATE (%.1fs / 10.0s)" % _revive_hold_timer
+						_interact_prompt.visible = true
+					if _revive_hold_timer >= 10.0:
+						# REVIVED!
+						_revive_hold_timer = 0.0
+						NetManager.send("revived", {"target": downed_rp.player_id})
+						if downed_rp.has_method("set_downed"):
+							downed_rp.set_downed(false)
+						_remote_down.erase(downed_rp.player_id)
+				else:
+					_revive_hold_timer = maxf(0.0, _revive_hold_timer - delta * 2.0)
+					if _interact_prompt:
+						_interact_prompt.text = "HOLD [E] TO REVIVE TEAMMATE"
+						_interact_prompt.visible = true
+		else:
+			_revive_hold_timer = 0.0
+
+func _get_living_remote_player() -> Node3D:
+	for pid in _remote_players.keys():
+		if not _remote_down.has(pid):
+			var rp = _remote_players[pid]
+			if is_instance_valid(rp):
+				return rp
+	return null
+
+func _get_nearest_downed_remote_player() -> Node3D:
+	var best: Node3D = null
+	var best_d := 999.0
+	for pid in _remote_players.keys():
+		var rp = _remote_players[pid]
+		if is_instance_valid(rp) and "is_downed" in rp and rp.is_downed:
+			var d = _player.global_position.distance_to(rp.global_position)
+			if d < best_d:
+				best_d = d
+				best = rp
+	return best
 
 func _tick_secret(delta: float) -> void:
 	if not is_instance_valid(_player):
@@ -507,6 +581,14 @@ func _broadcast_position() -> void:
 		"ry": _player.rotation.y,
 	})
 
+var _is_downed := false
+var _bleedout_timer := 0.0
+var _revive_hold_timer := 0.0
+var _spectate_index := 0
+var _downed_canvas: CanvasLayer = null
+var _downed_status: Label = null
+var _downed_bar: ProgressBar = null
+
 func _on_net_message(type: String, msg: Dictionary, from_player: int) -> void:
 	match type:
 		"pos":
@@ -516,6 +598,20 @@ func _on_net_message(type: String, msg: Dictionary, from_player: int) -> void:
 		"snus":
 			if _snus and _snus.has_method("remote_collect"):
 				_snus.remote_collect(int(msg.get("id", -1)))
+		"downed":
+			var rp_d = _remote_players.get(from_player)
+			if rp_d and is_instance_valid(rp_d) and rp_d.has_method("set_downed"):
+				rp_d.set_downed(true)
+			_remote_down[from_player] = true
+		"revived":
+			var target_id := int(msg.get("target", -1))
+			if target_id == NetManager.local_player_id:
+				_on_local_revived()
+			else:
+				var rp_r = _remote_players.get(target_id)
+				if rp_r and is_instance_valid(rp_r) and rp_r.has_method("set_downed"):
+					rp_r.set_downed(false)
+				_remote_down.erase(target_id)
 		"down":
 			var rp2 = _remote_players.get(from_player)
 			if rp2 and is_instance_valid(rp2) and rp2.has_method("set_dead"):
@@ -523,24 +619,19 @@ func _on_net_message(type: String, msg: Dictionary, from_player: int) -> void:
 			_remote_down[from_player] = true
 			_check_all_down()
 		"escaped":
-			# A teammate reached the exit — the whole team gets out.
 			if not _ended:
 				_end_run("exit")
 		"secret":
-			# A teammate stood too still in a wrong room — the team ends with them.
 			if not _ended:
 				_end_run("secret")
 		"scare":
-			# The host assigned US the next scare — our camera realizes it.
 			if int(msg.get("target", -1)) == NetManager.local_player_id \
 					and _entity and _entity.has_method("remote_scare"):
 				_entity.remote_scare(str(msg.get("kind", "peek")))
 		"scare_all":
-			# Simultaneous scare triggered for all players (jumpscare)
 			if _entity and _entity.has_method("remote_scare"):
 				_entity.remote_scare(str(msg.get("kind", "jump")))
 		"fig":
-			# A teammate's scare is live — render the same entity here.
 			if _entity and _entity.has_method("mirror_update"):
 				_entity.mirror_update(msg)
 		"figoff":
@@ -552,29 +643,90 @@ func _on_player_disconnected(pid: int) -> void:
 	if rp and is_instance_valid(rp):
 		if rp.has_method("set_dead"):
 			rp.set_dead(true)
-	# A player who left can no longer save the team.
 	if pid >= 0:
 		_remote_down[pid] = true
 		_check_all_down()
 
 func _local_down() -> void:
-	# Local player caught in co-op: freeze + fade, but keep watching the team.
-	_local_is_down = true
-	if _overlay and _overlay.has_method("trigger_jumpscare"):
-		_overlay.trigger_jumpscare()
-	if has_node("/root/AudioManager"):
-		AudioManager.stop_all_sounds()
-	if is_instance_valid(_camera):
-		_camera.fov = 72.0   # undo the kill close-up zoom for spectating
+	if _is_mp:
+		# Co-op: enter 30-second Downed Bleedout state so teammates can revive!
+		_is_downed = true
+		_bleedout_timer = 30.0
+		_local_is_down = true
+		NetManager.send("downed", {})
+		
+		if _overlay and _overlay.has_method("trigger_jumpscare"):
+			_overlay.trigger_jumpscare()
+		if is_instance_valid(_player) and _player.has_method("set_frozen"):
+			_player.set_frozen(true)
+		_setup_downed_hud()
+	else:
+		# Singleplayer: instant death
+		_local_is_down = true
+		if _overlay and _overlay.has_method("trigger_jumpscare"):
+			_overlay.trigger_jumpscare()
+		if has_node("/root/AudioManager"):
+			AudioManager.stop_all_sounds()
+		if is_instance_valid(_camera):
+			_camera.fov = 72.0
+		if is_instance_valid(_player) and _player.has_method("set_frozen"):
+			_player.set_frozen(true)
+		if _overlay and _overlay.has_method("fade_to"):
+			_overlay.fade_to(Color(0, 0, 0, 0.72), 1.2)
+		if _overlay and _overlay.has_method("show_ending"):
+			_overlay.show_ending(
+				"It found you.\n\nWait for the others…\nor for the dark.",
+				Color(0, 0, 0, 0.82),
+				Color(0.7, 0.66, 0.42))
+
+func _setup_downed_hud() -> void:
+	if is_instance_valid(_downed_canvas):
+		return
+	_downed_canvas = CanvasLayer.new()
+	_downed_canvas.layer = 30
+	add_child(_downed_canvas)
+	
+	var root := Control.new()
+	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_downed_canvas.add_child(root)
+	root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	
+	var vbox := VBoxContainer.new()
+	root.add_child(vbox)
+	vbox.set_anchors_and_offsets_preset(Control.PRESET_CENTER_BOTTOM)
+	vbox.offset_bottom = -80
+	vbox.add_theme_constant_override("separation", 8)
+	
+	_downed_status = Label.new()
+	_downed_status.text = "DOWNED — 30.0s LEFT TO REVIVE"
+	_downed_status.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_downed_status.add_theme_color_override("font_color", Color(1.0, 0.3, 0.3, 1.0))
+	_downed_status.add_theme_font_size_override("font_size", 22)
+	vbox.add_child(_downed_status)
+	
+	_downed_bar = ProgressBar.new()
+	_downed_bar.min_value = 0.0
+	_downed_bar.max_value = 30.0
+	_downed_bar.value = 30.0
+	_downed_bar.show_percentage = false
+	_downed_bar.custom_minimum_size = Vector2(360, 16)
+	var fill := StyleBoxFlat.new()
+	fill.bg_color = Color(0.9, 0.2, 0.2, 1.0)
+	fill.set_corner_radius_all(4)
+	_downed_bar.add_theme_stylebox_override("fill", fill)
+	vbox.add_child(_downed_bar)
+
+func _on_local_revived() -> void:
+	_is_downed = false
+	_local_is_down = false
+	_bleedout_timer = 0.0
+	if is_instance_valid(_downed_canvas):
+		_downed_canvas.queue_free()
+		_downed_canvas = null
 	if is_instance_valid(_player) and _player.has_method("set_frozen"):
-		_player.set_frozen(true)
-	if _overlay and _overlay.has_method("fade_to"):
-		_overlay.fade_to(Color(0, 0, 0, 0.72), 1.2)
-	if _overlay and _overlay.has_method("show_ending"):
-		_overlay.show_ending(
-			"It found you.\n\nWait for the others…\nor for the dark.",
-			Color(0, 0, 0, 0.82),
-			Color(0.7, 0.66, 0.42))
+		_player.set_frozen(false)
+	if _overlay and _overlay.has_method("flash"):
+		_overlay.flash(Color(0.2, 0.9, 0.3, 0.5), 1.0)
 	_check_all_down()
 
 ## Relay used by the shared-entity director (and any future networked system).
