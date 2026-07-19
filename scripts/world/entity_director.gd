@@ -1575,7 +1575,7 @@ func _begin_roam() -> void:
 		_roam_cooldown = 5.0
 		return
 		
-	var spot := _maze.world_center(cell)
+	var spot = _maze.world_center(cell)
 	_spawn_figure(spot, false)
 	if not _figure:
 		_roam_cooldown = 5.0
@@ -1659,8 +1659,8 @@ func _find_random_roam_cell() -> Vector2i:
 		return Vector2i(-1, -1)
 	cells.shuffle()
 	for c in cells:
-		var wpos := _maze.world_center(c)
-		var d := wpos.distance_to(_player.global_position)
+		var wpos = _maze.world_center(c)
+		var d = wpos.distance_to(_player.global_position)
 		if d > 12.0 and d < 32.0:
 			return c
 	return cells[0]
