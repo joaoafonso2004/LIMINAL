@@ -1,5 +1,9 @@
 # LIMINAL
 
+![LIMINAL Banner](media/liminal_banner.png)
+
+### **Made by João Afonso**
+
 Jogo de terror psicológico na primeira pessoa, tipo Backrooms. Acordas num piso
 de escritórios infinito — Level 0 — visto através de um sinal de TV antiga que
 adoece à medida que o medo sobe. Encontra as 5 latas de snus para desbloquear a
