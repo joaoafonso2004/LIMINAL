@@ -138,6 +138,15 @@ func is_player_inside() -> bool:
 	return _is_hidden
 
 
+func _set_locker_door_visible(locker_node: Node3D, vis: bool) -> void:
+	if not is_instance_valid(locker_node):
+		return
+	for child in locker_node.find_children("*", "MeshInstance3D"):
+		var n := child.name.to_lower()
+		if "door" in n or "gate" in n or "front" in n or "panel" in n:
+			child.visible = vis
+
+
 func toggle_hide_in_locker() -> bool:
 	if not is_instance_valid(_player):
 		return false
@@ -149,6 +158,7 @@ func toggle_hide_in_locker() -> bool:
 	if _is_hidden:
 		# Exit locker
 		_is_hidden = false
+		_set_locker_door_visible(nearest, true)
 		_player.global_position = _player_original_pos
 		if _player.has_method("set_frozen"):
 			_player.set_frozen(false)
@@ -167,9 +177,13 @@ func toggle_hide_in_locker() -> bool:
 		_is_hidden = true
 		_inside_locker_node = nearest
 		_player_original_pos = _player.global_position
+		_set_locker_door_visible(nearest, false)
 		
-		# Move player directly inside the locker node position
+		# Move player directly inside the locker node position & face door
 		_player.global_position = nearest.global_position
+		if nearest.get_child_count() > 0:
+			_player.rotation.y = nearest.get_child(0).rotation.y
+		
 		if _player.has_method("set_frozen"):
 			_player.set_frozen(true)
 		else:

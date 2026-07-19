@@ -208,10 +208,15 @@ func _physics_process(delta: float) -> void:
 	_arm_schedules(t)
 	_update_dread(t, looks, delta)
 	_update_random_sounds(t, looks, delta)
-	_stress = maxf(0.0, _stress - delta * 0.01)
+	# crouching calms the body: stress bleeds off ~2.5x faster while low
+	var stress_decay := 0.01
+	if is_instance_valid(_player) and "is_crouching" in _player and _player.is_crouching:
+		stress_decay = 0.025
+	_stress = maxf(0.0, _stress - delta * stress_decay)
 	_lookback_cd = maxf(0.0, _lookback_cd - delta)
 	_close_breath_cd = maxf(0.0, _close_breath_cd - delta)
 	_maybe_lookback_reveal(t, looks)
+	_tick_hallucination(delta)
 
 	if _mode != _logged_mode:
 		if Tuning.DEBUG_ENTITY_LOG and OS.is_debug_build():
@@ -258,6 +263,58 @@ func _arm_schedules(t: float) -> void:
 
 func _add_stress(v: float) -> void:
 	_stress = clampf(_stress + v, 0.0, 1.0)
+
+# ---------------------------------------------------------------------------
+# CORNER-EYE PARANOIA — at high stress the mind starts making things up:
+# a black silhouette at the EDGE of the view for ~0.3s, gone the instant the
+# player turns to face it. Never solid, never in the way, never real.
+# ---------------------------------------------------------------------------
+var _halluc: Node3D = null
+var _halluc_life := 0.0
+var _halluc_cd := 20.0
+
+func _tick_hallucination(delta: float) -> void:
+	if is_instance_valid(_halluc):
+		_halluc_life -= delta
+		# facing it kills it instantly — there was never anything there
+		var to: Vector3 = (_halluc.global_position + Vector3(0, 1.4, 0) - _camera.global_position).normalized()
+		var fwd: Vector3 = -_camera.global_transform.basis.z
+		if fwd.dot(to) > 0.92 or _halluc_life <= 0.0:
+			_halluc.queue_free()
+			_halluc = null
+		return
+	if _mode != "idle" or _stress < 0.35 or _watcher_scene == null:
+		return
+	_halluc_cd -= delta
+	if _halluc_cd > 0.0:
+		return
+	_halluc_cd = _rng.randf_range(8.0, 22.0) * (1.5 - _stress)
+	# spawn at the EDGE of vision: 28-40° off the camera forward, 5-9 m out
+	var fwd2: Vector3 = -_camera.global_transform.basis.z
+	fwd2.y = 0
+	if fwd2.length() < 0.01:
+		return
+	fwd2 = fwd2.normalized()
+	var side := 1.0 if _rng.randf() < 0.5 else -1.0
+	var dir := fwd2.rotated(Vector3.UP, side * _rng.randf_range(0.5, 0.7))
+	var pos: Vector3 = _player.global_position + dir * _rng.randf_range(5.0, 9.0)
+	pos.y = 0.0
+	if not _ray_clear(_camera.global_position, pos + Vector3(0, 1.5, 0)):
+		return
+	var mesh_root := Node3D.new()
+	add_child(mesh_root)
+	var model: Node3D = _watcher_scene.instantiate()
+	mesh_root.add_child(model)
+	ModelUtils.setup_character_for_movement(model, 2.85)
+	mesh_root.global_position = pos
+	_blacken(model)
+	# half-there: darker than the world, lighter than real
+	for child in model.find_children("*", "MeshInstance3D"):
+		var mi := child as MeshInstance3D
+		if mi and mi.has_meta("silh_mat"):
+			(mi.get_meta("silh_mat") as StandardMaterial3D).albedo_color.a = 0.55
+	_halluc = mesh_root
+	_halluc_life = 0.3
 
 ## The cruellest trick in the book: sometimes when the player whips around to
 ## check behind them, something IS there — mid-distance, plainly visible,
@@ -475,6 +532,7 @@ func _begin_peek() -> void:
 		# some are gone the instant your eyes land on them
 		_peek_style = "skittish" if _rng.randf() < 0.25 else "stare"
 		_peek_timer = _rng.randf_range(6.0, 11.0)
+		_wire_peek_skeleton()
 		return
 	# Fallback: open spot near a wall (no free corner in range right now).
 	var spot := _find_peek_spot()
@@ -502,6 +560,7 @@ func _begin_peek() -> void:
 	_stare_timer = -1.0
 	_peek_style = "skittish" if _rng.randf() < 0.25 else "stare"
 	_peek_timer = _rng.randf_range(6.0, 11.0)
+	_wire_peek_skeleton()
 
 ## Pick a wall-end corner where cover geometry really works from the player's
 ## point of view: leaning out is visible, hiding is not.
@@ -568,15 +627,26 @@ func _tick_peek(delta: float) -> void:
 		_prox_muffle = prox
 		muffle.emit(prox)
 
+	# Monster this close makes the electrics sick: violent-ish panel flicker
+	# + buzzing whenever it lurks within 12 m (peeking or hidden).
+	if flat.length() < 12.0:
+		request_flicker.emit(0.35)
+		_proximity_buzz(delta)
+	else:
+		request_flicker.emit(0.0)
+
 	# Reaction gaze window: 0.18s eye contact so player clearly sees the head
 	var staring := false
 	if (visible_now or looked) and not _peek_recede:
 		if _stare_timer < 0.0:
 			_stare_timer = 0.18  # sweet spot eye-contact reaction duration
-			_stare_breath(flat.length())
 			_add_stress(0.12)
-			if has_node("/root/AudioManager"):
-				AudioManager.set_heartbeat_state("peek")
+			# audio fires ONLY on true eye contact — a head you merely have
+			# on-screen must not trigger phantom breath/heartbeat (fix #13)
+			if looked:
+				_peek_reaction_sound(flat.length())
+				if has_node("/root/AudioManager"):
+					AudioManager.set_heartbeat_state("peek")
 		if _stare_timer > 0.0:
 			_stare_timer = maxf(0.0, _stare_timer - delta)
 			staring = _stare_timer > 0.0
@@ -638,10 +708,7 @@ func _tick_peek(delta: float) -> void:
 
 	if _peek_timer <= 0.0 and not _peek_corner:
 		_end_apparition()
-
-	var skeletons = _figure.find_children("*", "Skeleton3D")
-	if skeletons.size() > 0:
-		_apply_peek_bone_poses(skeletons[0], delta)
+	# (bone poses are applied via skeleton_updated — post-animation — not here)
 
 ## A breath you can localize: it comes from where the thing stands.
 func _stare_breath(dist: float) -> void:
@@ -649,6 +716,34 @@ func _stare_breath(dist: float) -> void:
 		return
 	if is_instance_valid(_figure):
 		AudioManager.play_sfx_3d(self, _sfx["breath"], _figure.global_position + Vector3(0, 1.5, 0), -4.0, 26.0, _rng.randf_range(0.92, 1.02))
+
+# 10-sound peek reaction pool (whispers/groans from the juanjo pack) — a
+# different voice with drifting pitch on every eye contact, never the same twice.
+const PEEK_SOUND_POOL := [1, 3, 5, 10, 11, 13, 15, 17, 21, 25]
+var _peek_pool_streams: Array = []
+var _buzz_cd := 0.0
+
+func _peek_reaction_sound(dist: float) -> void:
+	if dist > 15.0 or not has_node("/root/AudioManager"):
+		return
+	if _peek_pool_streams.is_empty():
+		for idx in PEEK_SOUND_POOL:
+			var p := "res://assets/audio/juanjo/juanjo_sound - Backrooms Entity %d.wav" % idx
+			if ResourceLoader.exists(p):
+				_peek_pool_streams.append(load(p))
+	if _peek_pool_streams.is_empty() or not is_instance_valid(_figure):
+		return
+	var stream: AudioStream = _peek_pool_streams[_rng.randi() % _peek_pool_streams.size()]
+	AudioManager.play_sfx_3d(self, stream, _figure.global_position + Vector3(0, 1.6, 0), -5.0, 26.0, _rng.randf_range(0.85, 1.15))
+
+## Electrical buzz whenever the thing lurks close — the fixtures feel it too.
+func _proximity_buzz(delta: float) -> void:
+	_buzz_cd -= delta
+	if _buzz_cd > 0.0 or not has_node("/root/AudioManager") or not _sfx.has("flicker"):
+		return
+	_buzz_cd = _rng.randf_range(3.5, 6.5)
+	if is_instance_valid(_figure):
+		AudioManager.play_sfx_3d(self, _sfx["flicker"], _figure.global_position + Vector3(0, 2.6, 0), -8.0, 20.0, _rng.randf_range(0.95, 1.1))
 
 func _find_peek_spot() -> Dictionary:
 	# A valid peek spot must be (a) currently OFF-screen, so it "appears" when
@@ -734,6 +829,12 @@ func _tick_shadow(delta: float) -> void:
 	if _shadow_timer > Tuning.SHADOW_MAX_TIME:
 		_end_apparition()   # it never outstays; absence is also dread
 		return
+	# the fixtures feel it too — flicker + buzz while it tails within 12 m
+	if dist < 12.0:
+		request_flicker.emit(0.3)
+		_proximity_buzz(delta)
+	else:
+		request_flicker.emit(0.0)
 	match _shadow_state:
 		"watch":
 			# exposed at the corner, motionless, eyes on your back
@@ -829,10 +930,12 @@ func _begin_jump(t: float) -> void:
 	fwd.y = 0
 	fwd = fwd.normalized() if fwd.length() > 0.01 else Vector3(0, 0, -1)
 	var eye: Vector3 = _camera.global_position
-	var want := 0.85
+	# 2.5 m out: the player sees the WHOLE towering silhouette — head, torso,
+	# arms, legs — not a faceful of chest. Ray-checked so it never clips.
+	var want := 2.5
 	var hit := _ray_hit(eye, eye + fwd * (want + 0.35))
 	if not hit.is_empty():
-		want = maxf(0.5, eye.distance_to(hit["position"]) - 0.3)
+		want = maxf(0.9, eye.distance_to(hit["position"]) - 0.3)
 	var pos: Vector3 = _player.global_position + fwd * want
 	pos.y = 0.0
 	_spawn_figure(pos, true)
@@ -842,11 +945,11 @@ func _begin_jump(t: float) -> void:
 		_play_anim("ual1_Idle")
 		# creep even closer during the flash
 		var tw := create_tween()
-		tw.tween_property(_figure, "global_position", pos + fwd * 0.2, Tuning.JUMP_DURATION).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
-	# zoom punch: snap the lens onto it
+		tw.tween_property(_figure, "global_position", pos + fwd * 0.3, Tuning.JUMP_DURATION).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	# mild zoom punch — frames the full body instead of tunneling into it
 	if is_instance_valid(_camera):
 		_jump_prev_fov = _camera.fov
-		_camera.fov = 46.0
+		_camera.fov = 62.0
 	_mode = "jump"
 	jumpscare.emit()
 	request_flicker.emit(1.0)
@@ -892,6 +995,8 @@ func _begin_chase() -> void:
 	_path_fail = 0.0
 	_chase_done += 1
 	chase_started.emit()
+	if _overlay and _overlay.has_method("set_chase_vignette"):
+		_overlay.set_chase_vignette(true)
 	if not _prox_muffle:
 		_prox_muffle = true
 		muffle.emit(true)          # the hum sinks — something is coming
@@ -972,8 +1077,27 @@ func _tick_chase(delta: float) -> void:
 		_do_caught()
 		return
 
+func _breathing_gives_away(d: float) -> bool:
+	if not is_instance_valid(_player):
+		return false
+	var hiding := _player.get_meta("is_hiding", false)
+	if not hiding or d > 5.0:
+		return false
+	# Holding breath (Space / RMB) suppresses nervous breathing alert!
+	var holding := "is_holding_breath" in _player and _player.is_holding_breath
+	return not holding
+
 	# does IT see YOU? (entity-eye ray, not the camera) — feeds its memory
 	_fig_sees = _ray_clear(_figure.global_position + Vector3(0, 1.6, 0), _camera.global_position)
+	# Crouching stealth: a low, small target is much harder to track at range —
+	# beyond 7 m a crouched player slips out of its perception entirely.
+	var crouched := is_instance_valid(_player) and "is_crouching" in _player and _player.is_crouching
+	if _fig_sees and crouched and d > 7.0:
+		_fig_sees = false
+	# Locker mechanic: a hidden player is invisible (the door blocks the ray) —
+	# but nervous breathing within 5 m gives them away unless they HOLD it.
+	if _breathing_gives_away(d):
+		_fig_sees = true
 	if _fig_sees:
 		_last_seen_pos = _player.global_position
 		_has_seen_player_this_chase = true
@@ -1053,9 +1177,12 @@ func _tick_chase(delta: float) -> void:
 		_close_breath_cd = 3.0
 		AudioManager.play_sfx_3d(self, _sfx["breath"], _figure.global_position + Vector3(0, 1.6, 0), -2.0, 20.0, 1.05)
 
-	# Apply dynamic camera shake
+	# Apply dynamic camera shake — and a violent adrenaline burst inside 2.5 m
 	if is_instance_valid(_player) and "shake_intensity" in _player:
-		_player.shake_intensity = maxf(_player.shake_intensity, closeness * 0.22)
+		var shake := closeness * 0.22
+		if d < 2.5:
+			shake = 0.85
+		_player.shake_intensity = maxf(_player.shake_intensity, shake)
 
 	# Memory model: while it can't see you, it runs to where it LAST saw you.
 	# Reaching that spot without re-acquiring = it stops and searches (steps go
@@ -1157,6 +1284,10 @@ func _end_chase(vanished: bool) -> void:
 	_roam_cooldown = _rng.randf_range(20.0, 35.0) * lerpf(1.0, 0.6, _menace)
 	chase_ended.emit()
 	request_flicker.emit(0.0)
+	if _overlay and _overlay.has_method("set_chase_vignette"):
+		_overlay.set_chase_vignette(false)
+	if is_instance_valid(_camera):
+		_camera.fov = 72.0
 	_add_stress(0.55)
 	if has_node("/root/AudioManager"):
 		AudioManager.set_heartbeat_state("silent")
@@ -1276,7 +1407,7 @@ func _spawn_figure(pos: Vector3, _instant: bool) -> void:
 	add_child(mesh_root)
 	var model: Node3D = _watcher_scene.instantiate()
 	mesh_root.add_child(model)
-	ModelUtils.setup_character_for_movement(model, 2.35)   # too-tall, thin
+	ModelUtils.setup_character_for_movement(model, 2.85)   # towers unnaturally, near the ceiling
 	mesh_root.global_position = pos
 	# darken to a pure silhouette
 	_blacken(model)
@@ -1379,6 +1510,7 @@ func _end_apparition() -> void:
 	_peek_wait_timer = 0.0
 	_stare_timer = -1.0
 	muffle.emit(false)
+	request_flicker.emit(0.0)   # proximity flicker dies with the apparition
 	_next_peek = _dread_scaled_peek_gap()
 	if has_node("/root/AudioManager"):
 		AudioManager.set_heartbeat_state("silent")
@@ -1481,7 +1613,7 @@ func _spawn_mirror() -> void:
 	add_child(mesh_root)
 	var model: Node3D = _watcher_scene.instantiate()
 	mesh_root.add_child(model)
-	ModelUtils.setup_character_for_movement(model, 2.35)
+	ModelUtils.setup_character_for_movement(model, 2.85)
 	_blacken(model)
 	var ap := AnimationPlayer.new()
 	model.add_child(ap)
@@ -1590,20 +1722,22 @@ func _apply_chase_contortions(delta: float) -> void:
 		skeleton.set_bone_pose_rotation(r_arm_idx, rot)
 
 
-func _apply_peek_bone_poses(skeleton: Skeleton3D, delta: float) -> void:
+func _apply_peek_bone_poses(skeleton: Skeleton3D, _delta: float) -> void:
 	if not is_instance_valid(_figure) or not _peek_corner:
 		return
-	
+
 	# Determine lean direction relative to the figure's local space
 	var out_dir := (_peek_to - _peek_from).normalized()
 	var local_out_dir := _figure.global_transform.basis.inverse() * out_dir
 	var tilt_side := 1.0 if local_out_dir.x >= 0.0 else -1.0
-	
+
 	var t := Time.get_ticks_msec() / 1000.0
 	var breath := sin(t * 2.5) * 0.015
-	
-	# Only tilt the HEAD sideways to peek around the corner edge.
-	# The body stays completely behind cover — player only sees the head.
+
+	# Only the HEAD emerges past the corner edge. The body is pinned ~0.75 m
+	# behind cover, so the slide must actually CLEAR that distance — 0.35 m
+	# never made it past the wall (the "peeking wasn't working" bug). 0.95 m
+	# of unnatural neck-stretch does, and reads horrifying.
 	var head_idx := skeleton.find_bone("Head")
 	if head_idx != -1:
 		# Tilt sideways (roll) + slight forward lean (curiosity)
@@ -1613,15 +1747,53 @@ func _apply_peek_bone_poses(skeleton: Skeleton3D, delta: float) -> void:
 		skeleton.set_bone_pose_rotation(head_idx, head_rot)
 		# Slide the head bone sideways to actually peek past the wall edge
 		var head_rest := skeleton.get_bone_rest(head_idx).origin
-		var head_slide := Vector3(tilt_side * _lean * 0.35, 0.0, 0.0)
+		var head_slide := Vector3(tilt_side * _lean * 0.95, 0.0, 0.0)
 		skeleton.set_bone_pose_position(head_idx, head_rest + head_slide)
-	
+
 	# Slight neck tilt to support the head lean (subtle, not full body)
 	var neck_idx := skeleton.find_bone("Neck")
 	if neck_idx != -1:
 		var neck_roll := tilt_side * _lean * 0.25
 		var neck_rot := Quaternion(Vector3.FORWARD, neck_roll) * Quaternion(Vector3.UP, sin(t * 1.5) * 0.03)
 		skeleton.set_bone_pose_rotation(neck_idx, neck_rot)
+
+	# Head-only isolation: collapse limb chains (arms, legs, shoulders) so no
+	# elbow or foot ever pokes past the wall edge. The trunk chain must stay —
+	# zeroing Spine/Hips would collapse the Head with them (scale propagates).
+	for i in range(skeleton.get_bone_count()):
+		if _is_limb_bone(skeleton, i):
+			skeleton.set_bone_pose_scale(i, Vector3.ZERO)
+
+func _is_limb_bone(skeleton: Skeleton3D, bone_idx: int) -> bool:
+	var limb_roots := ["LeftShoulder", "LeftUpperArm", "RightShoulder", "RightUpperArm",
+		"LeftUpLeg", "RightUpLeg", "LeftUpperLeg", "RightUpperLeg"]
+	var cur := bone_idx
+	while cur != -1:
+		if limb_roots.has(skeleton.get_bone_name(cur)):
+			return true
+		cur = skeleton.get_bone_parent(cur)
+	return false
+
+## Bone overrides must land AFTER animation evaluation or the AnimationPlayer
+## simply overwrites them the same frame (why the lean never showed). The
+## skeleton_updated signal fires post-evaluation; the guard stops re-entry.
+var _peek_skel_busy := false
+func _on_peek_skeleton_updated(skeleton: Skeleton3D) -> void:
+	if _peek_skel_busy or _mode != "peek" or not is_instance_valid(skeleton):
+		return
+	_peek_skel_busy = true
+	_apply_peek_bone_poses(skeleton, 0.0)
+	_peek_skel_busy = false
+
+func _wire_peek_skeleton() -> void:
+	if not is_instance_valid(_figure):
+		return
+	var skeletons := _figure.find_children("*", "Skeleton3D")
+	if skeletons.is_empty():
+		return
+	var skeleton: Skeleton3D = skeletons[0]
+	if not skeleton.skeleton_updated.is_connected(_on_peek_skeleton_updated.bind(skeleton)):
+		skeleton.skeleton_updated.connect(_on_peek_skeleton_updated.bind(skeleton))
 
 
 func _begin_roam() -> void:
