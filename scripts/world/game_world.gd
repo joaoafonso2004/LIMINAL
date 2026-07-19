@@ -141,6 +141,12 @@ func _spawn_snus() -> void:
 	if _snus.has_signal("all_collected"):
 		_snus.all_collected.connect(_on_snus_all)
 
+func _spawn_lockers() -> void:
+	_lockers = Node3D.new()
+	_lockers.set_script(load("res://scripts/world/locker_manager.gd"))
+	add_child(_lockers)
+	_lockers.setup(_player, _maze)
+
 func _spawn_entity() -> void:
 	_entity = Node3D.new()
 	_entity.set_script(load("res://scripts/world/entity_director.gd"))
