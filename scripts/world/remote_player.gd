@@ -22,6 +22,9 @@ var _speed_smooth: float
 var _got_first: bool = false
 
 
+var is_downed := false
+var _revive_beacon: Label3D = null
+
 func _ready() -> void:
 	collision_layer = 4
 	collision_mask = 0
@@ -39,12 +42,37 @@ func _ready() -> void:
 	_mesh_root.name = "MeshRoot"
 	add_child(_mesh_root)
 
+	# 3D Revive Beacon above downed teammate's head
+	_revive_beacon = Label3D.new()
+	_revive_beacon.text = "[+] NEED REVIVE"
+	_revive_beacon.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	_revive_beacon.no_depth_test = true
+	_revive_beacon.position = Vector3(0, 2.1, 0)
+	_revive_beacon.modulate = Color(1.0, 0.25, 0.25, 1.0)
+	_revive_beacon.outline_modulate = Color(0, 0, 0, 1.0)
+	_revive_beacon.font_size = 28
+	_revive_beacon.visible = false
+	add_child(_revive_beacon)
+
 	var model: Node3D = _load_model()
 	if model != null:
 		_mesh_root.add_child(model)
 		_setup_model(model)
 	else:
 		_build_fallback_body()
+
+
+## Mark remote player as downed (collapsed to floor) or revived.
+func set_downed(v: bool) -> void:
+	is_downed = v
+	if is_instance_valid(_mesh_root):
+		var tw := create_tween()
+		if v:
+			tw.tween_property(_mesh_root, "rotation:x", -PI * 0.45, 0.35)
+		else:
+			tw.tween_property(_mesh_root, "rotation:x", 0.0, 0.35)
+	if is_instance_valid(_revive_beacon):
+		_revive_beacon.visible = v
 
 
 ## Load and instance the survivor GLB, or null if unavailable.
