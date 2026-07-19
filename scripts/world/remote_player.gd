@@ -42,12 +42,23 @@ func _ready() -> void:
 	_mesh_root.name = "MeshRoot"
 	add_child(_mesh_root)
 
+	# 3D Name Tag above teammate's head (visible through walls so you never lose your friends)
+	var name_tag := Label3D.new()
+	name_tag.text = "PLAYER %d" % (player_id + 1)
+	name_tag.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	name_tag.no_depth_test = true
+	name_tag.position = Vector3(0, 1.95, 0)
+	name_tag.modulate = Color(0.95, 0.85, 0.55, 0.85)
+	name_tag.outline_modulate = Color(0.0, 0.0, 0.0, 1.0)
+	name_tag.font_size = 20
+	add_child(name_tag)
+
 	# 3D Revive Beacon above downed teammate's head
 	_revive_beacon = Label3D.new()
 	_revive_beacon.text = "[+] NEED REVIVE"
 	_revive_beacon.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 	_revive_beacon.no_depth_test = true
-	_revive_beacon.position = Vector3(0, 2.1, 0)
+	_revive_beacon.position = Vector3(0, 2.25, 0)
 	_revive_beacon.modulate = Color(1.0, 0.25, 0.25, 1.0)
 	_revive_beacon.outline_modulate = Color(0, 0, 0, 1.0)
 	_revive_beacon.font_size = 28
@@ -153,9 +164,9 @@ func _process(delta: float) -> void:
 	global_position = global_position.lerp(_target_pos, w)
 	rotation.y = lerp_angle(rotation.y, _target_rot_y, w)
 
-	var actual_moved := (global_position - _prev_actual_pos).length() / max(delta, 0.001)
+	var moved: float = (global_position - _prev_actual_pos).length() / maxf(delta, 0.001)
 	_prev_actual_pos = global_position
-	_speed_smooth = lerp(_speed_smooth, actual_moved, 10.0 * delta)
+	_speed_smooth = lerp(_speed_smooth, moved, 10.0 * delta)
 
 	_update_animation()
 
