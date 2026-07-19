@@ -1263,10 +1263,14 @@ func _spawn_figure(pos: Vector3, _instant: bool) -> void:
 			if anim != null:
 				for track_idx in range(anim.get_track_count() - 1, -1, -1):
 					var path_str := str(anim.track_get_path(track_idx))
-					if (":Spine" in path_str or ":spine" in path_str or
-						":Neck" in path_str or ":neck" in path_str or
-						":LeftUpperArm" in path_str or ":leftupperarm" in path_str or
-						":RightUpperArm" in path_str or ":rightupperarm" in path_str):
+					var is_arm_track := (":LeftUpperArm" in path_str or ":leftupperarm" in path_str or
+						":RightUpperArm" in path_str or ":rightupperarm" in path_str or
+						":LeftShoulder" in path_str or ":leftshoulder" in path_str or
+						":RightShoulder" in path_str or ":rightshoulder" in path_str)
+					var is_spine_track := (":Spine" in path_str or ":spine" in path_str or
+						":Neck" in path_str or ":neck" in path_str)
+					
+					if is_spine_track or (is_arm_track and _mode == "chase"):
 						anim.remove_track(track_idx)
 		ap.add_animation_library("", lib)
 		ModelUtils.set_animation_loops(ap)
