@@ -191,9 +191,12 @@ func _update_head_bob(delta: float) -> void:
 			_play_footstep()
 		_prev_bob_cos = bob_cos
 	else:
-		var base := _current_eye_height + idle_sway
+		# Premium figure-8 breathing sway in 3D space when idle
+		var idle_sway_x := sin(_idle_time * 0.8) * 0.008
+		var idle_sway_y := cos(_idle_time * 1.4) * 0.006
+		var base := _current_eye_height + idle_sway + idle_sway_y
 		camera.position.y = lerpf(camera.position.y, base, clampf(delta * 6.0, 0.0, 1.0))
-		camera.position.x = lerpf(camera.position.x, 0.0, clampf(delta * 6.0, 0.0, 1.0))
+		camera.position.x = lerpf(camera.position.x, idle_sway_x, clampf(delta * 6.0, 0.0, 1.0))
 
 		var idle_roll := sin(_idle_time * 0.9) * IDLE_TILT
 		camera.rotation.z = lerpf(camera.rotation.z, idle_roll, clampf(delta * 4.0, 0.0, 1.0))

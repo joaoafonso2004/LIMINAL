@@ -57,6 +57,16 @@ func _build() -> void:
 		Settings.save_settings())
 	vb.add_child(fs)
 
+	var crt := CheckButton.new()
+	crt.text = "CRT FILTER"
+	crt.button_pressed = Settings.crt_filter
+	crt.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	_style(crt, 20, DIM_YELLOW)
+	crt.toggled.connect(func(on: bool):
+		Settings.crt_filter = on
+		Settings.save_settings())
+	vb.add_child(crt)
+
 	var back := Button.new()
 	back.text = "BACK"
 	back.custom_minimum_size = Vector2(220, 56)

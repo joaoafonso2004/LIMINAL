@@ -18,6 +18,7 @@ func _ready() -> void:
 		_unlocked = true
 	_setup_buses()
 	_create_players()
+	_setup_limiter()
 
 func _input(event: InputEvent) -> void:
 	if _unlocked:
@@ -95,3 +96,20 @@ func play_sfx_3d(parent: Node, stream: AudioStream, world_pos: Vector3, volume_d
 	p.global_position = world_pos
 	p.play()
 	p.finished.connect(p.queue_free)
+
+
+func _setup_limiter() -> void:
+	var master_idx := AudioServer.get_bus_index("Master")
+	if master_idx >= 0:
+		# Check if a limiter or compressor is already present
+		var has_limiter := false
+		for i in range(AudioServer.get_bus_effect_count(master_idx)):
+			if AudioServer.get_bus_effect(master_idx, i) is AudioEffectLimiter:
+				has_limiter = true
+				break
+		if not has_limiter:
+			var limiter := AudioEffectLimiter.new()
+			limiter.ceiling_db = -0.5
+			limiter.threshold_db = -2.0
+			limiter.soft_clip_db = 1.0
+			AudioServer.add_bus_effect(master_idx, limiter)
