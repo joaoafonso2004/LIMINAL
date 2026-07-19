@@ -172,7 +172,7 @@ func _ready() -> void:
 	if ResourceLoader.exists(ANIM_LIB):
 		_anim_lib = load(ANIM_LIB)
 	_load_sfx()
-	_next_peek = Tuning.PEEK_FIRST_SIGHTING + _rng.randf_range(-15.0, 30.0)
+	_next_peek = 1.0
 	_next_jump = 999.0                                   # armed at JUMP_ARM_TIME
 	_next_chase = 999.0                                  # armed at CHASE_ARM_TIME
 	_next_sound = 25.0
@@ -511,14 +511,7 @@ func _dread_scaled_peek_gap() -> float:
 	var t := 0.0
 	if has_node("/root/GameManager"):
 		t = GameManager.run_time
-	# peeks get more frequent as the run goes on
-	var gap := lerpf(Tuning.PEEK_GAP_EARLY, Tuning.PEEK_GAP_LATE, clampf(t / 600.0, 0.0, 1.0))
-	# director-lite: watchers nobody saw retry sooner; after big scares the
-	# game backs off and lets the player breathe (that's when fear grows back)
-	gap *= clampf(1.0 - float(_unseen_streak) * 0.25, 0.4, 1.0)
-	gap *= 1.0 + _stress * 0.6
-	gap *= lerpf(1.0, 0.45, _menace)   # more tins → more eyes on you
-	return t + gap * _rng.randf_range(0.7, 1.3)
+	return t + 1.0
 
 func _tick_peek(delta: float) -> void:
 	if not is_instance_valid(_figure):
