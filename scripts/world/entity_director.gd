@@ -530,7 +530,7 @@ func _begin_peek() -> void:
 		_stare_timer = -1.0
 		# most watchers hold your gaze a beat before slipping away;
 		# some are gone the instant your eyes land on them
-		_peek_style = "skittish" if _rng.randf() < 0.25 else "stare"
+		_peek_style = "trap" if _rng.randf() < 0.25 else "stealth"
 		_peek_timer = _rng.randf_range(6.0, 11.0)
 		_wire_peek_skeleton()
 		return
@@ -558,7 +558,7 @@ func _begin_peek() -> void:
 	_peek_loop_count = 0
 	_peek_wait_timer = 0.0
 	_stare_timer = -1.0
-	_peek_style = "skittish" if _rng.randf() < 0.25 else "stare"
+	_peek_style = "trap" if _rng.randf() < 0.25 else "stealth"
 	_peek_timer = _rng.randf_range(6.0, 11.0)
 	_wire_peek_skeleton()
 
@@ -595,31 +595,31 @@ func _tick_peek(delta: float) -> void:
 	var flat := _figure.global_position - _player.global_position
 	flat.y = 0.0
 	
-	# If player gets too close to the cover (5.5m), vanish instantly!
-	var too_close := flat.length() < 5.5
-	if too_close:
-		_end_apparition()
-		return
-
-	# Handle Peek-a-boo wait state (invisible behind cover)
-	if _peek_wait_timer > 0.0:
-		_peek_wait_timer -= delta
-		_figure.global_position = _peek_from
-		_set_figure_alpha(0.0)
-		
-		if _peek_wait_timer <= 0.0:
-			_lean_dir = 1.0
-		return
-
-	# NEVER seen up close: gone before the player can reach it.
-	if flat.length() < Tuning.PEEK_VANISH_DIST:
-		_end_apparition()
-		return
-
 	var looked := _player_looking_at(_figure, 0.40) or _in_view(_figure)
 	var visible_now := _in_view(_figure) and _has_los(_figure)
 	if visible_now:
 		_peek_witnessed = true
+
+	# TRAP ENCOUNTER: If this is a trap peek and player gets closer than 7.5m, CHARGE!
+	if _peek_style == "trap" and flat.length() < 7.5:
+		var trap_pos := _figure.global_position
+		_end_apparition()
+		_spawn_figure(trap_pos, false)
+		if _figure:
+			_set_figure_alpha(1.0)
+			_face_player(_figure)
+			_play_anim("ual1_Sprint")
+			_mode = "chase"
+			_chase_state = "pursue"
+			_last_seen_pos = _player.global_position
+			_has_seen_player_this_chase = true
+			_chase_speed_mult = 1.05
+			request_flicker.emit(1.0)
+			if has_node("/root/AudioManager") and _sfx.has("chase_scream"):
+				AudioManager.play_sfx(_sfx["chase_scream"], -1.0)
+			_chase_steps = _attach_loop(_figure, _sfx.get("heavy_steps"), -4.0)
+			_chase_scream = _attach_loop(_figure, _sfx.get("chase_scream"), -18.0)
+		return
 
 	# Near but unseen → muffle
 	var prox := flat.length() < Tuning.PEEK_MUFFLE_DIST and not visible_now
@@ -635,14 +635,12 @@ func _tick_peek(delta: float) -> void:
 	else:
 		request_flicker.emit(0.0)
 
-	# Trigger recede as soon as player looks or sees the entity!
-	if (visible_now or looked) and not _peek_recede:
+	# 100% SILENT PEEKING — No audio on gaze!
+	# Normal stealth peeks recede when looked at. Trap peeks stay staring!
+	if (visible_now or looked) and not _peek_recede and _peek_style != "trap":
 		if _stare_timer < 0.0:
 			_stare_timer = 0.12  # quick eye-contact reaction duration
-			_add_stress(0.12)
-			_peek_reaction_sound(flat.length())
-			if has_node("/root/AudioManager"):
-				AudioManager.set_heartbeat_state("peek")
+			_add_stress(0.10)
 		if _stare_timer > 0.0:
 			_stare_timer = maxf(0.0, _stare_timer - delta)
 		if _stare_timer <= 0.0:
@@ -657,7 +655,7 @@ func _tick_peek(delta: float) -> void:
 			_face_player(_figure)
 			_set_figure_alpha(clampf(_lean * 2.0, 0.0, 1.0))
 		
-		# Auto-recede after 2.0 seconds if player doesn't look
+		# Auto-recede after timer runs out
 		if _peek_timer <= 0.0 and not _peek_recede:
 			_peek_recede = true
 			_lean_dir = -1.0
