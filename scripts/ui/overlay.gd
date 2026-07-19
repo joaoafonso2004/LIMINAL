@@ -193,21 +193,27 @@ func trigger_jumpscare() -> void:
 	# Trigger a massive VHS aberration signal glitch
 	pulse(3.5)
 	
+	# Play a loud scream
+	if has_node("/root/AudioManager"):
+		var scream_path := "res://assets/audio/sfx/enemy/enemy_jumpscare_scream.mp3"
+		if ResourceLoader.exists(scream_path):
+			var scream_stream := load(scream_path) as AudioStream
+			AudioManager.play_sfx(scream_stream, 6.0, 1.1)
+	
 	var tw := create_tween()
 	tw.set_parallel(true)
 	tw.tween_property(_jumpscare, "scale", Vector2(1.3, 1.3), 0.3).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
 	tw.tween_property(_jumpscare, "modulate", Color(1.3, 0.1, 0.1, 1.0), 0.2)
 	
-	# Add a violent high-frequency shake to simulate a frantic attack twitch
+	# Violent high-frequency shake
 	var shake_tw := create_tween()
-	shake_tw.set_loops(6)
+	shake_tw.set_loops(12)
 	var shake_offset := 35.0
 	shake_tw.tween_property(_jumpscare, "position", Vector2(randf_range(-shake_offset, shake_offset), randf_range(-shake_offset, shake_offset)), 0.05)
 	
+	# Settle after shaking — image stays on screen, tinted red until death menu covers it
 	var tw2 := create_tween()
-	tw2.tween_interval(0.4)
-	tw2.tween_property(_jumpscare, "modulate", Color(0.0, 0.0, 0.0, 1.0), 0.45)
-	tw2.tween_callback(func():
-		if is_instance_valid(_jumpscare):
-			_jumpscare.visible = false
-			_jumpscare.position = Vector2.ZERO)
+	tw2.tween_interval(0.7)
+	tw2.tween_property(_jumpscare, "position", Vector2.ZERO, 0.15)
+	tw2.tween_property(_jumpscare, "modulate", Color(0.6, 0.0, 0.0, 1.0), 0.5)
+

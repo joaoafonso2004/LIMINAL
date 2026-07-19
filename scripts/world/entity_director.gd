@@ -1511,7 +1511,9 @@ func _spawn_mirror() -> void:
 func _get_scare_target_pos() -> Vector3:
 	if is_instance_valid(_figure):
 		if _peek_corner:
-			return _peek_from.lerp(_peek_to, _lean) + Vector3(0, 1.4, 0)
+			# The head peeks sideways from the hide position toward the out position
+			var out_dir := (_peek_to - _peek_from).normalized()
+			return _peek_from + out_dir * (_lean * 0.5) + Vector3(0, 1.6, 0)
 		return _figure.global_position + Vector3(0, 1.4, 0)
 	return Vector3.ZERO
 
@@ -1604,44 +1606,34 @@ func _apply_chase_contortions(delta: float) -> void:
 func _apply_peek_bone_poses(skeleton: Skeleton3D, delta: float) -> void:
 	if not is_instance_valid(_figure) or not _peek_corner:
 		return
-	var spine_idx := skeleton.find_bone("Spine")
-	var chest_idx := skeleton.find_bone("Chest")
-	if spine_idx == -1:
-		return
-		
-	# Determine lean direction relative to local space of the figure
+	
+	# Determine lean direction relative to the figure's local space
 	var out_dir := (_peek_to - _peek_from).normalized()
 	var local_out_dir := _figure.global_transform.basis.inverse() * out_dir
-	
-	# Roll sideways along local Z (Vector3.FORWARD)
-	var roll_axis := Vector3.FORWARD
 	var tilt_side := 1.0 if local_out_dir.x >= 0.0 else -1.0
 	
-	# Distributed tilt angles
-	var spine_tilt := tilt_side * _lean * 0.25
-	var chest_tilt := tilt_side * _lean * 0.22
-	
 	var t := Time.get_ticks_msec() / 1000.0
-	var breath := sin(t * 2.5) * 0.03
+	var breath := sin(t * 2.5) * 0.015
 	
-	# Set Spine rotation
-	var spine_rot := Quaternion(roll_axis, spine_tilt + breath)
-	skeleton.set_bone_pose_rotation(spine_idx, spine_rot)
+	# Only tilt the HEAD sideways to peek around the corner edge.
+	# The body stays completely behind cover — player only sees the head.
+	var head_idx := skeleton.find_bone("Head")
+	if head_idx != -1:
+		# Tilt sideways (roll) + slight forward lean (curiosity)
+		var head_roll := tilt_side * _lean * 0.55 + breath
+		var head_fwd := _lean * 0.12
+		var head_rot := Quaternion(Vector3.FORWARD, head_roll) * Quaternion(Vector3.RIGHT, head_fwd)
+		skeleton.set_bone_pose_rotation(head_idx, head_rot)
+		# Slide the head bone sideways to actually peek past the wall edge
+		var head_rest := skeleton.get_bone_rest(head_idx).origin
+		var head_slide := Vector3(tilt_side * _lean * 0.35, 0.0, 0.0)
+		skeleton.set_bone_pose_position(head_idx, head_rest + head_slide)
 	
-	# Set Chest rotation (distributing curvature)
-	if chest_idx != -1:
-		var chest_rot := Quaternion(roll_axis, chest_tilt)
-		skeleton.set_bone_pose_rotation(chest_idx, chest_rot)
-		
-	# Slide Spine bone sideways to stretch body out from cover while feet are anchored
-	var spine_rest_pos := skeleton.get_bone_rest(spine_idx).origin
-	var spine_slide := local_out_dir * (_lean * 0.75)
-	skeleton.set_bone_pose_position(spine_idx, spine_rest_pos + spine_slide)
-	
-	# Minor neck head tilt to face player slightly contorted
+	# Slight neck tilt to support the head lean (subtle, not full body)
 	var neck_idx := skeleton.find_bone("Neck")
 	if neck_idx != -1:
-		var neck_rot := Quaternion(Vector3.UP, sin(t * 1.5) * 0.05) * Quaternion(roll_axis, (spine_tilt + chest_tilt) * 0.3)
+		var neck_roll := tilt_side * _lean * 0.25
+		var neck_rot := Quaternion(Vector3.FORWARD, neck_roll) * Quaternion(Vector3.UP, sin(t * 1.5) * 0.03)
 		skeleton.set_bone_pose_rotation(neck_idx, neck_rot)
 
 

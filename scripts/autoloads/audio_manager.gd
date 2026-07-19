@@ -58,9 +58,9 @@ func _create_players() -> void:
 	heartbeat_player.name = "HeartbeatPlayer"
 	heartbeat_player.bus = "SFX"
 	heartbeat_player.playback_type = AudioServer.PLAYBACK_TYPE_STREAM
-	var hb_stream := load("res://assets/audio/sfx/player/heartbeat.wav") as AudioStreamWav
+	var hb_stream := load("res://assets/audio/sfx/player/heartbeat.wav") as AudioStreamWAV
 	if hb_stream != null:
-		hb_stream.loop_mode = AudioStreamWav.LOOP_FORWARD
+		hb_stream.loop_mode = AudioStreamWAV.LOOP_FORWARD
 		heartbeat_player.stream = hb_stream
 	add_child(heartbeat_player)
 	heartbeat_player.volume_db = -40.0

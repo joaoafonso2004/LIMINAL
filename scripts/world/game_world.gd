@@ -525,17 +525,19 @@ func _end_run(reason: String) -> void:
 			_ending_secret()
 
 func _ending_caught() -> void:
-	# hard cut to black + dead silence, the sentence, then the choice
-	if _overlay and _overlay.has_method("fade_to"):
-		_overlay.fade_to(Color(0, 0, 0, 1), 0.12)
+	# Stop ambient loops immediately but let the jumpscare scream ring out
 	if _hum:
 		_hum.stop()
 	if _hvac:
 		_hvac.stop()
 	if _drone:
 		_drone.stop()
+	# Let the scream play for 1 second before killing all audio
+	await get_tree().create_timer(1.0).timeout
 	if has_node("/root/AudioManager"):
 		AudioManager.stop_all_sounds()
+	if _overlay and _overlay.has_method("fade_to"):
+		_overlay.fade_to(Color(0, 0, 0, 1), 0.3)
 	if _overlay and _overlay.has_method("show_ending"):
 		_overlay.show_ending(
 			"Ele encontrou-te primeiro.",
