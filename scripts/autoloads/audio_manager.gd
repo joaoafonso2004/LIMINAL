@@ -89,6 +89,24 @@ func stop_music() -> void:
 	if music_player:
 		music_player.stop()
 
+func stop_all_sounds() -> void:
+	stop_music()
+	for p in sfx_players:
+		if is_instance_valid(p):
+			p.stop()
+	if Engine.get_main_loop() is SceneTree:
+		var tree := Engine.get_main_loop() as SceneTree
+		if tree.root:
+			_stop_players_recursive(tree.root)
+
+func _stop_players_recursive(node: Node) -> void:
+	if node is AudioStreamPlayer or node is AudioStreamPlayer3D or node is AudioStreamPlayer2D:
+		if node != music_player and not sfx_players.has(node):
+			node.stop()
+			node.queue_free()
+	for child in node.get_children():
+		_stop_players_recursive(child)
+
 func set_music_volume(volume_db: float, dur: float = 0.5) -> void:
 	if music_player:
 		create_tween().tween_property(music_player, "volume_db", volume_db, dur)

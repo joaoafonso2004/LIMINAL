@@ -325,6 +325,8 @@ func _on_muffle(active: bool) -> void:
 		AudioServer.remove_bus_effect(idx, 0)
 
 func _on_caught() -> void:
+	if _overlay and _overlay.has_method("trigger_jumpscare"):
+		_overlay.trigger_jumpscare()
 	if _is_mp:
 		# In co-op, being caught takes only you out — tell the others and
 		# spectate rather than restarting everyone's run.
@@ -456,6 +458,10 @@ func _on_player_disconnected(pid: int) -> void:
 func _local_down() -> void:
 	# Local player caught in co-op: freeze + fade, but keep watching the team.
 	_local_is_down = true
+	if _overlay and _overlay.has_method("trigger_jumpscare"):
+		_overlay.trigger_jumpscare()
+	if has_node("/root/AudioManager"):
+		AudioManager.stop_all_sounds()
 	if is_instance_valid(_camera):
 		_camera.fov = 72.0   # undo the kill close-up zoom for spectating
 	if is_instance_valid(_player) and _player.has_method("set_frozen"):
@@ -525,7 +531,7 @@ func _ending_caught() -> void:
 	if _drone:
 		_drone.stop()
 	if has_node("/root/AudioManager"):
-		AudioManager.fade_out_music(0.3)
+		AudioManager.stop_all_sounds()
 	if _overlay and _overlay.has_method("show_ending"):
 		_overlay.show_ending(
 			"Ele encontrou-te primeiro.",
@@ -647,9 +653,12 @@ func _phone_fate(phone: Node3D) -> String:
 	return "silence"        # 30%
 
 func _interact_with_phone(phone: Node3D) -> void:
+	if phone.has_meta("used") and phone.get_meta("used"):
+		return
 	if phone.has_meta("interacting") and phone.get_meta("interacting"):
 		return
 	phone.set_meta("interacting", true)
+	phone.set_meta("used", true)
 
 	if not has_node("/root/AudioManager"):
 		return
@@ -830,9 +839,10 @@ func _update_interact_prompt(delta: float) -> void:
 			if is_instance_valid(phone):
 				var dist = _player.global_position.distance_to(phone.global_position)
 				if dist < 2.2:
-					if not phone.has_meta("interacting") or not phone.get_meta("interacting"):
-						target_text = "[E] ANSWER TELEPHONE"
-						in_range = true
+					if not phone.has_meta("used") or not phone.get_meta("used"):
+						if not phone.has_meta("interacting") or not phone.get_meta("interacting"):
+							target_text = "[E] ANSWER TELEPHONE"
+							in_range = true
 						
 	# 4. Check Locker proximity
 	if not in_range and _lockers and _lockers.has_method("get_nearest_locker_in_range"):

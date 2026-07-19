@@ -1162,7 +1162,7 @@ func _do_caught() -> void:
 			_face_player(_figure)
 		_camera.fov = 46.0
 	if has_node("/root/AudioManager") and _sfx.has("jump"):
-		AudioManager.play_sfx(_sfx["jump"], 0.0, 0.95)
+		AudioManager.play_sfx(_sfx["jump"], 6.0, 0.92)
 	get_tree().create_timer(0.28).timeout.connect(func():
 		if is_instance_valid(self):
 			caught.emit())

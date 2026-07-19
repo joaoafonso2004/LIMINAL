@@ -14,6 +14,7 @@ const SHADER_PATH := "res://assets/shaders/post_crt_old_tv.gdshader"
 var _fx: ColorRect
 var _fade: ColorRect
 var _ending: Label
+var _jumpscare: TextureRect
 var _mat: ShaderMaterial
 
 # --- Dread state (target + current, smoothly approached) ---
@@ -50,6 +51,16 @@ func _ready() -> void:
 	_fade.color = Color(0, 0, 0, 0)
 	add_child(_fade)
 	_fade.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+
+	# --- Jumpscare texture overlay ---
+	_jumpscare = TextureRect.new()
+	_jumpscare.name = "Jumpscare"
+	_jumpscare.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_jumpscare.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_jumpscare.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	_jumpscare.visible = false
+	add_child(_jumpscare)
+	_jumpscare.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 
 	# --- Ending text label ---
 	_ending = Label.new()
@@ -162,3 +173,30 @@ func clear_ending() -> void:
 		var tw2 := create_tween()
 		var clear_col := Color(_fade.color.r, _fade.color.g, _fade.color.b, 0.0)
 		tw2.tween_property(_fade, "color", clear_col, 1.0)
+
+
+func trigger_jumpscare() -> void:
+	if not is_instance_valid(_jumpscare):
+		return
+	var img_path := "res://assets/ui/jumpscare_face.png"
+	if ResourceLoader.exists(img_path):
+		_jumpscare.texture = load(img_path)
+	
+	var vp_size := get_viewport().get_visible_rect().size
+	_jumpscare.pivot_offset = vp_size / 2.0
+	
+	_jumpscare.scale = Vector3(0.85, 0.85, 1.0)
+	_jumpscare.modulate = Color(1.0, 1.0, 1.0, 1.0)
+	_jumpscare.visible = true
+	
+	var tw := create_tween()
+	tw.set_parallel(true)
+	tw.tween_property(_jumpscare, "scale", Vector3(1.2, 1.2, 1.0), 0.24).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	tw.tween_property(_jumpscare, "modulate", Color(1.0, 0.15, 0.15, 1.0), 0.15)
+	
+	var tw2 := create_tween()
+	tw2.tween_interval(0.35)
+	tw2.tween_property(_jumpscare, "modulate", Color(0.0, 0.0, 0.0, 1.0), 0.5)
+	tw2.tween_callback(func():
+		if is_instance_valid(_jumpscare):
+			_jumpscare.visible = false)
