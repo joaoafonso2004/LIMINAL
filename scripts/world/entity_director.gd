@@ -477,7 +477,28 @@ func _dispatch(kind: String) -> bool:
 	return true
 
 ## A trapped phone answered — the entity takes the call. Player-initiated,
-## so it bypasses the schedule but not the state machine.
+## A trapped phone answered — the entity roars and charges straight towards the telephone!
+func phone_chase(phone_pos: Vector3) -> void:
+	if _ended:
+		return
+	if _mode == "peek" or _mode == "shadow":
+		_end_apparition()
+	_mode = "chase"
+	_chase_state = "windup"
+	_windup_timer = 0.6
+	_chase_done += 1
+	_windup_spot = _find_chase_spawn()
+	if _windup_spot == Vector3.INF:
+		var eye := _camera.global_position if is_instance_valid(_camera) else _player.global_position
+		_windup_spot = eye + Vector3(8.0, 0, 8.0)
+	chase_started.emit()
+	var ov_start := _get_overlay()
+	if is_instance_valid(ov_start) and ov_start.has_method("set_chase_vignette"):
+		ov_start.set_chase_vignette(true)
+	request_flicker.emit(0.85)
+	if has_node("/root/AudioManager") and _sfx.has("chase_scream"):
+		AudioManager.play_sfx_3d(self, _sfx["chase_scream"], _windup_spot + Vector3(0, 1.5, 0), 4.0, 50.0, 0.9)
+
 func phone_jumpscare() -> void:
 	if _ended or _mode != "idle":
 		return
@@ -1199,7 +1220,8 @@ func _tick_chase(delta: float) -> void:
 		_los_lost = 0.0
 	else:
 		_los_lost += delta
-		if _los_lost >= LOS_LOSE_TIME + 2.0:   # memory buys it a little time
+		var max_los_lost := lerpf(LOS_LOSE_TIME, LOS_LOSE_TIME + 2.5, _menace)
+		if _los_lost >= max_los_lost:
 			_end_chase(true)
 			return
 	request_flicker.emit(1.0)
@@ -1246,12 +1268,14 @@ func _chase_move(delta: float, dist_to_player: float) -> void:
 			return
 	# Speed has moods: a burst from afar, a fraction of mercy up close (the
 	# almost-caught margin players remember), and mounting urgency over time.
-	var speed := CHASE_SPEED * _chase_speed_mult
+	# Speed rises with every SNUS grabbed: 4.15m/s base up to 5.65m/s at 5 tins!
+	var base_spd := CHASE_SPEED + (_menace * 1.5)
+	var speed := base_spd * _chase_speed_mult
 	if dist_to_player > 8.0:
 		speed *= 1.1
 	elif dist_to_player < 3.0:
 		speed *= 0.93
-	speed += minf(_chase_time * 0.01, 0.15)
+	speed += minf(_chase_time * 0.01, 0.25)
 	var step_dir: Vector3 = target - _figure.global_position
 	step_dir.y = 0
 	if step_dir.length() > 0.01:
