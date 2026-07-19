@@ -1821,8 +1821,14 @@ func _tick_roam(delta: float) -> void:
 	var d := _figure.global_position.distance_to(_player.global_position)
 	var crouched: bool = bool(_player.is_crouching) if is_instance_valid(_player) and "is_crouching" in _player else false
 	
-	# Detection check: entity spots player
-	var entity_sees_player := _ray_clear(_figure.global_position + Vector3(0, 1.5, 0), _camera.global_position)
+	# Vision Cone Check: entity only sees player if facing towards them (110-degree cone)
+	var fwd := -_figure.global_transform.basis.z.normalized()
+	var to_player := (_player.global_position - _figure.global_position).normalized()
+	var facing_dot := fwd.dot(to_player)
+	var in_vision_cone := facing_dot > 0.15
+	
+	# Detection check: entity spots player in its vision cone
+	var entity_sees_player := in_vision_cone and _ray_clear(_figure.global_position + Vector3(0, 1.5, 0), _camera.global_position)
 	var entity_spot_range := 3.5 if crouched else 12.0
 		
 	# Detection check: player spots entity
