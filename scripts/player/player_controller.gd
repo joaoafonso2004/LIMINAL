@@ -320,7 +320,7 @@ func _spawn_fp_body() -> void:
 							for track_idx in range(anim.get_track_count() - 1, -1, -1):
 								var path := anim.track_get_path(track_idx)
 								var bone_name := ""
-								if path.get_subnames_count() > 0:
+								if path.get_subname_count() > 0:
 									bone_name = path.get_subname(0)
 								elif ":" in str(path):
 									bone_name = str(path).split(":")[-1]
