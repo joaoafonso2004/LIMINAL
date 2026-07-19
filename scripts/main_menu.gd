@@ -10,7 +10,7 @@ const BG_PATH: String = "res://assets/textures/backgrounds/menu_void_corridor.pn
 const WORDMARK_PATH: String = "res://assets/ui/wordmark_title.png"
 const THEME_PATH: String = "res://assets/ui/theme.tres"
 const FONT_PATH: String = "res://assets/fonts/special_elite.ttf"
-const MUSIC_PATH: String = "res://assets/audio/music/music_exploration_liminal_dread_theme.mp3"
+const MUSIC_PATH: String = "res://assets/audio/ambient/ambient.mp3"
 
 const DIM_YELLOW: Color = Color(0.72, 0.66, 0.42)
 
