@@ -658,9 +658,9 @@ func _tick_peek(delta: float) -> void:
 		if not _peek_recede:
 			# leans out slowly (0.7s)
 			_lean = clampf(_lean + _lean_dir * delta / 0.7, 0.0, 1.0)
-			_figure.global_position = _peek_from
+			_figure.global_position = _peek_from.lerp(_peek_to, _lean * 0.75)
 			_face_player(_figure)
-			_set_figure_alpha(1.0)
+			_set_figure_alpha(clampf(_lean * 2.0, 0.0, 1.0))
 		
 		if _peek_timer <= 0.0 and not _peek_recede:
 			_peek_recede = true
@@ -671,26 +671,15 @@ func _tick_peek(delta: float) -> void:
 			_lean_dir = -1.0
 			# Smooth stealthy duck back behind wall (0.45s sweet spot)
 			_lean = clampf(_lean + _lean_dir * delta / 0.45, 0.0, 1.0)
-			_figure.global_position = _peek_from
+			_figure.global_position = _peek_from.lerp(_peek_to, _lean * 0.75)
 			_face_player(_figure)
-			# Stay visible while head pulls back behind cover, then fade at lean 0
-			var alpha_val := 1.0 if _lean > 0.05 else (_lean / 0.05)
-			_set_figure_alpha(clampf(alpha_val, 0.0, 1.0))
+			# Stay visible while pulling back behind cover, then fade to 0 when hidden
+			var alpha_val := 1.0 if _lean > 0.08 else 0.0
+			_set_figure_alpha(alpha_val)
 			
 			if _lean <= 0.0:
-				if _peek_loop_count >= 1:
-					_end_apparition()
-					return
-				else:
-					# Trigger peek-a-boo wait!
-					_peek_loop_count += 1
-					_peek_wait_timer = _rng.randf_range(1.5, 3.0)
-					_peek_recede = false
-					_stare_timer = -1.0
-					_lean = 0.0
-					_lean_dir = 0.0
-					_set_figure_alpha(0.0)
-					return
+				_end_apparition()
+				return
 		else:
 			# Sprint backward very fast and fade
 			var away: Vector3 = (_figure.global_position - _player.global_position)
