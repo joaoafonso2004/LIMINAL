@@ -14,12 +14,12 @@ uniform float pulse : hint_range(0.0, 1.0) = 0.0;
 // Look constants (documented in docs/design/game-design.md).
 // Grade target: dark A24-still — heavy red/cyan fringing, crushed brown-black
 // shadows, drained sepia colour.
-const float CURVATURE = 0.02;          // barrel distortion strength (much flatter)
-const float ABERRATION_BASE = 0.0005;  // RGB split at rest, in UV units (very subtle)
-const float SCANLINE_BASE = 0.04;      // scanline darkening at rest (lighter)
-const float SNOW_BASE = 0.012;          // TV snow amount at rest (almost invisible)
-const float SHADOW_GAMMA = 1.0;        // >1 crushes shadows toward black (no crush, clean shadows)
-const vec3 PHOSPHOR_TINT = vec3(1.0, 1.0, 1.0); // phosphor push (natural color)
+const float CURVATURE = 0.035;         // subtle realistic CRT barrel glass curvature
+const float ABERRATION_BASE = 0.0007;  // subtle RGB lens split
+const float SCANLINE_BASE = 0.05;      // scanline texture
+const float SNOW_BASE = 0.012;          // TV snow amount at rest
+const float SHADOW_GAMMA = 1.06;        // cinematic deep shadows
+const vec3 PHOSPHOR_TINT = vec3(1.02, 0.98, 0.92); // warm analog phosphor push
 
 // Cheap deterministic hash -> [0,1)
 float hash21(vec2 p) {

@@ -517,14 +517,27 @@ func _on_exit_reached() -> void:
 	_end_run("exit")
 
 # ---------------------------------------------------------------------------
-# Snus collection
-# ---------------------------------------------------------------------------
 func _on_snus_count(collected: int, total: int) -> void:
 	if _snus_ui and _snus_ui.has_method("set_count"):
 		_snus_ui.set_count(collected, total)
-	# every tin taken makes it angrier — shared pickups, shared difficulty
+	# every tin taken makes it angrier and faster — shared pickups, escalating danger!
+	var menace := float(collected) / float(maxi(total, 1))
 	if _entity and _entity.has_method("set_menace"):
-		_entity.set_menace(float(collected) / float(maxi(total, 1)))
+		_entity.set_menace(menace)
+		
+	# Distorted entity scream on picking up a SNUS tin
+	if collected > 0 and has_node("/root/AudioManager"):
+		var scream := load("res://assets/audio/juanjo/juanjo_sound - Backrooms Entity 9.wav")
+		if ResourceLoader.exists("res://assets/audio/juanjo/juanjo_sound - Backrooms Entity 9.wav"):
+			AudioManager.play_sfx(scream, 0.0, randf_range(0.85, 1.05))
+		if _overlay and _overlay.has_method("pulse"):
+			_overlay.pulse(0.9)
+		if _maze and _maze.has_method("set_flicker"):
+			_maze.set_flicker(1.0)
+			get_tree().create_timer(1.2).timeout.connect(func():
+				if is_instance_valid(_maze) and _maze.has_method("set_flicker"):
+					_maze.set_flicker(0.0)
+			)
 
 func _on_snus_all() -> void:
 	if _snus_done:
@@ -637,6 +650,10 @@ func _on_net_message(type: String, msg: Dictionary, from_player: int) -> void:
 		"figoff":
 			if _entity and _entity.has_method("mirror_off"):
 				_entity.mirror_off()
+		"phone_chase":
+			var p_pos := Vector3(float(msg.get("x", 0)), 0, float(msg.get("z", 0)))
+			if _entity and _entity.has_method("phone_chase"):
+				_entity.phone_chase(p_pos)
 
 func _on_player_disconnected(pid: int) -> void:
 	var rp = _remote_players.get(pid)
@@ -937,14 +954,11 @@ func _interact_with_phone(phone: Node3D) -> void:
 		if not is_instance_valid(phone) or not has_node("/root/AudioManager"):
 			return
 		AudioManager.play_sfx_3d(self, breath_stream, phone.global_position, 8.0, 20.0, 0.85)
-		if _overlay and _overlay.has_method("pulse"):
-			_overlay.pulse(0.6)
-		if _maze and _maze.has_method("set_flicker"):
-			_maze.set_flicker(0.7)
-			get_tree().create_timer(1.4).timeout.connect(func():
-				if is_instance_valid(_maze) and _maze.has_method("set_flicker"):
-					_maze.set_flicker(0.0)
-			)
+		# The entity roars and charges straight to the telephone location!
+		if _entity and _entity.has_method("phone_chase"):
+			_entity.phone_chase(phone.global_position)
+		if _is_mp:
+			net_send("phone_chase", {"x": phone.global_position.x, "z": phone.global_position.z})
 
 		# Pure spatial 3D audio guidance: emits a directional sound in the exact direction of the nearest SNUS!
 		var nearest_pos := Vector3.ZERO
