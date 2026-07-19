@@ -50,6 +50,13 @@ func announce_exit() -> void:
 	_flash(6.0)
 
 
+func show_phone_hint(dir_text: String, dist_m: int, hold: float = 8.0) -> void:
+	if not is_instance_valid(_label):
+		return
+	_label.text = "TELEPHONE SIGNAL: NEAREST SNUS IS %d METERS %s" % [dist_m, dir_text]
+	_flash(hold)
+
+
 func _flash(hold: float) -> void:
 	if _fade_tween and _fade_tween.is_valid():
 		_fade_tween.kill()

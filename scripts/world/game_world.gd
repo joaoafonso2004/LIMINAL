@@ -647,16 +647,35 @@ func _tick_phone_interaction() -> void:
 ## follows depends on WHICH phone it is (fixed per phone, same for every
 ## co-op client): some are radar phones (a red pulse marks the nearest tin
 ## for a few seconds — a bearing, not a map), some are trapped (the entity
-## answers), and some just breathe and hang up.
+func _cardinal_direction_name(diff: Vector3) -> String:
+	var angle := atan2(-diff.z, diff.x)
+	var deg := rad_to_deg(angle)
+	if deg < 0.0:
+		deg += 360.0
+	if deg >= 337.5 or deg < 22.5:
+		return "EAST [ → ]"
+	elif deg >= 22.5 and deg < 67.5:
+		return "NORTH-EAST [ ↗ ]"
+	elif deg >= 67.5 and deg < 112.5:
+		return "NORTH [ ↑ ]"
+	elif deg >= 112.5 and deg < 157.5:
+		return "NORTH-WEST [ ↖ ]"
+	elif deg >= 157.5 and deg < 202.5:
+		return "WEST [ ← ]"
+	elif deg >= 202.5 and deg < 247.5:
+		return "SOUTH-WEST [ ↙ ]"
+	elif deg >= 247.5 and deg < 292.5:
+		return "SOUTH [ ↓ ]"
+	else:
+		return "SOUTH-EAST [ ↘ ]"
+
 func _phone_fate(phone: Node3D) -> String:
 	var cx := int(floor(phone.global_position.x / 4.0 + 0.5))
 	var cz := int(floor(phone.global_position.z / 4.0 + 0.5))
 	var h := posmod(cx * 31 + cz * 17, 10)
-	if h <= 3:
-		return "radar"      # 40%
-	elif h <= 6:
-		return "scare"      # 30%
-	return "silence"        # 30%
+	if h <= 2:
+		return "scare"      # 30% scare + radar
+	return "radar"          # 70% pure radar
 
 func _interact_with_phone(phone: Node3D) -> void:
 	if phone.has_meta("used") and phone.get_meta("used"):
@@ -687,37 +706,42 @@ func _interact_with_phone(phone: Node3D) -> void:
 					_maze.set_flicker(0.0)
 			)
 
-		match fate:
-			"radar":
-				# A brief red pulse through the walls: direction, not location.
-				var nearest_pos := Vector3.ZERO
-				if _snus and _snus.has_method("get_nearest_uncollected_pos"):
-					nearest_pos = _snus.get_nearest_uncollected_pos(_player.global_position)
-				if nearest_pos != Vector3.ZERO:
-					_radar_timer = 16.0
-					_radar_ping_cd = 0.05  # start pinging immediately!
-					
-					var beacon := OmniLight3D.new()
-					beacon.light_color = Color(1.0, 0.15, 0.15)
-					beacon.light_energy = 9.0
-					beacon.omni_range = 35.0
-					beacon.shadow_enabled = false
-					add_child(beacon)
-					beacon.global_position = nearest_pos
-					get_tree().create_timer(3.5).timeout.connect(func():
-						if is_instance_valid(beacon):
-							beacon.queue_free()
-					)
-			"scare":
-				# Wrong number. It was already on the line.
-				if _phone_scare_cd <= 0.0:
-					_phone_scare_cd = 60.0
-					get_tree().create_timer(1.1).timeout.connect(func():
-						if _entity and _entity.has_method("phone_jumpscare"):
-							_entity.phone_jumpscare()
-					)
-			_:
-				pass  # just the breathing, then the line goes dead
+		# Every phone provides directional guidance to the nearest uncollected SNUS!
+		var nearest_pos := Vector3.ZERO
+		if _snus and _snus.has_method("get_nearest_uncollected_pos"):
+			nearest_pos = _snus.get_nearest_uncollected_pos(_player.global_position)
+		if nearest_pos != Vector3.ZERO:
+			var diff := nearest_pos - _player.global_position
+			var dist := int(round(diff.length()))
+			var dir_str := _cardinal_direction_name(diff)
+			if _snus_ui and _snus_ui.has_method("show_phone_hint"):
+				_snus_ui.show_phone_hint(dir_str, dist, 8.0)
+				
+			# 3D spatial ping in the direction of the target SNUS
+			var dir_vec := diff.normalized()
+			var ping_pos := _player.global_position + dir_vec * 6.0
+			AudioManager.play_sfx_3d(self, breath_stream, ping_pos, 4.0, 30.0, 1.1)
+			
+			_radar_timer = 20.0
+			_radar_ping_cd = 0.05
+			var beacon := OmniLight3D.new()
+			beacon.light_color = Color(1.0, 0.2, 0.1)
+			beacon.light_energy = 10.0
+			beacon.omni_range = 35.0
+			beacon.shadow_enabled = false
+			add_child(beacon)
+			beacon.global_position = nearest_pos
+			get_tree().create_timer(4.0).timeout.connect(func():
+				if is_instance_valid(beacon):
+					beacon.queue_free()
+			)
+
+		if fate == "scare" and _phone_scare_cd <= 0.0:
+			_phone_scare_cd = 60.0
+			get_tree().create_timer(1.1).timeout.connect(func():
+				if _entity and _entity.has_method("phone_jumpscare"):
+					_entity.phone_jumpscare()
+			)
 
 		get_tree().create_timer(1.8).timeout.connect(func():
 			if is_instance_valid(phone):
