@@ -800,8 +800,19 @@ func _ending_caught() -> void:
 func _show_death_menu() -> void:
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 	var layer := CanvasLayer.new()
-	layer.layer = 30   # above the CRT filter and the ending text
+	layer.layer = 100   # above all CRT filters and overlays
+	layer.process_mode = Node.PROCESS_MODE_ALWAYS
 	add_child(layer)
+
+	# Mouse enforcement controller to keep cursor visible on click
+	var mouse_fix := Control.new()
+	mouse_fix.name = "MouseFix"
+	var scr := GDScript.new()
+	scr.source_code = "extends Control\nfunc _process(_delta: float) -> void:\n\tif Input.mouse_mode != Input.MOUSE_MODE_VISIBLE:\n\t\tInput.mouse_mode = Input.MOUSE_MODE_VISIBLE\n"
+	scr.reload()
+	mouse_fix.set_script(scr)
+	layer.add_child(mouse_fix)
+
 	var vb := VBoxContainer.new()
 	vb.alignment = BoxContainer.ALIGNMENT_CENTER
 	vb.add_theme_constant_override("separation", 14)

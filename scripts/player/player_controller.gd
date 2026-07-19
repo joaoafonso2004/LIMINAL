@@ -271,6 +271,8 @@ func get_camera() -> Camera3D:
 
 func set_frozen(v: bool) -> void:
 	frozen = v
+	if v:
+		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 
 
 func get_current_cell(cell_size: float) -> Vector2i:
