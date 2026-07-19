@@ -88,7 +88,7 @@ func _unhandled_input(event: InputEvent) -> void:
 			Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 		return
 
-	var is_hiding := get_meta("is_hiding", false)
+	var is_hiding: bool = bool(get_meta("is_hiding", false))
 	if frozen and not is_hiding:
 		return
 
@@ -103,7 +103,7 @@ func _unhandled_input(event: InputEvent) -> void:
 
 
 func _physics_process(delta: float) -> void:
-	var is_hiding := get_meta("is_hiding", false)
+	var is_hiding: bool = bool(get_meta("is_hiding", false))
 	if is_hiding:
 		velocity = Vector3.ZERO
 		# Hold breath while hiding in locker (Space or Right Mouse Button)

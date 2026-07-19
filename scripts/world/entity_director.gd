@@ -995,8 +995,9 @@ func _begin_chase() -> void:
 	_path_fail = 0.0
 	_chase_done += 1
 	chase_started.emit()
-	if _overlay and _overlay.has_method("set_chase_vignette"):
-		_overlay.set_chase_vignette(true)
+	var ov_start := _get_overlay()
+	if is_instance_valid(ov_start) and ov_start.has_method("set_chase_vignette"):
+		ov_start.set_chase_vignette(true)
 	if not _prox_muffle:
 		_prox_muffle = true
 		muffle.emit(true)          # the hum sinks — something is coming
@@ -1058,6 +1059,24 @@ func _find_chase_spawn() -> Vector3:
 		return p
 	return Vector3.INF  # caller reschedules a new attempt shortly
 
+func _get_overlay() -> Node:
+	if _world != null and "_overlay" in _world and is_instance_valid(_world._overlay):
+		return _world._overlay
+	var tree := get_tree()
+	if tree != null and tree.root != null:
+		return tree.root.find_child("Overlay", true, false)
+	return null
+
+func _breathing_gives_away(d: float) -> bool:
+	if not is_instance_valid(_player):
+		return false
+	var hiding: bool = bool(_player.get_meta("is_hiding", false)) if _player.has_meta("is_hiding") else false
+	if not hiding or d > 5.0:
+		return false
+	# Holding breath (Space / RMB) suppresses nervous breathing alert!
+	var holding: bool = bool(_player.is_holding_breath) if "is_holding_breath" in _player else false
+	return not holding
+
 func _tick_chase(delta: float) -> void:
 	# --- phase: windup (no figure yet, the world just turned hostile) ---
 	if _chase_state == "windup":
@@ -1077,21 +1096,15 @@ func _tick_chase(delta: float) -> void:
 		_do_caught()
 		return
 
-func _breathing_gives_away(d: float) -> bool:
-	if not is_instance_valid(_player):
-		return false
-	var hiding := _player.get_meta("is_hiding", false)
-	if not hiding or d > 5.0:
-		return false
-	# Holding breath (Space / RMB) suppresses nervous breathing alert!
-	var holding := "is_holding_breath" in _player and _player.is_holding_breath
-	return not holding
+	# Dynamic claustrophobic FOV tunnel vision during chase
+	if is_instance_valid(_camera):
+		_camera.fov = lerpf(_camera.fov, 58.0, 4.0 * delta)
 
 	# does IT see YOU? (entity-eye ray, not the camera) — feeds its memory
 	_fig_sees = _ray_clear(_figure.global_position + Vector3(0, 1.6, 0), _camera.global_position)
 	# Crouching stealth: a low, small target is much harder to track at range —
 	# beyond 7 m a crouched player slips out of its perception entirely.
-	var crouched := is_instance_valid(_player) and "is_crouching" in _player and _player.is_crouching
+	var crouched: bool = bool(_player.is_crouching) if is_instance_valid(_player) and "is_crouching" in _player else false
 	if _fig_sees and crouched and d > 7.0:
 		_fig_sees = false
 	# Locker mechanic: a hidden player is invisible (the door blocks the ray) —
@@ -1284,8 +1297,9 @@ func _end_chase(vanished: bool) -> void:
 	_roam_cooldown = _rng.randf_range(20.0, 35.0) * lerpf(1.0, 0.6, _menace)
 	chase_ended.emit()
 	request_flicker.emit(0.0)
-	if _overlay and _overlay.has_method("set_chase_vignette"):
-		_overlay.set_chase_vignette(false)
+	var ov_end := _get_overlay()
+	if is_instance_valid(ov_end) and ov_end.has_method("set_chase_vignette"):
+		ov_end.set_chase_vignette(false)
 	if is_instance_valid(_camera):
 		_camera.fov = 72.0
 	_add_stress(0.55)
