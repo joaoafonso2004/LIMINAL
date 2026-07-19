@@ -287,12 +287,15 @@ func _spawn_fp_body() -> void:
 	var model := packed.instantiate() as Node3D
 	_mesh_root.add_child(model)
 	
-	# Scale and ground the character
-	ModelUtils.setup_character_for_movement(model, 1.8)
+	# Scale the character
+	ModelUtils.scale_to_height(model, 1.8)
 	
-	# Offset the body mesh backward so that when looking down, the camera looks 
-	# in front of the hips/waist instead of directly down the hollow cylinder opening!
-	_mesh_root.position = Vector3(0, 0, 0.18)
+	# Ground the model locally relative to _mesh_root (so feet bottom is at local Y=0 of player capsule)
+	var local_aabb := ModelUtils._get_combined_aabb(model)
+	model.position = Vector3(0, -local_aabb.position.y, 0)
+	
+	# Offset the body mesh backward slightly so the legs are positioned naturally under the player
+	_mesh_root.position = Vector3(0, 0, 0.08)
 	
 	# Guard against dark mesh from missing normals
 	var meshes := model.find_children("*", "MeshInstance3D")
@@ -313,32 +316,30 @@ func _spawn_fp_body() -> void:
 			var skeletons := model.find_children("*", "Skeleton3D")
 			if skeletons.size() > 0:
 				var skeleton: Skeleton3D = skeletons[0]
-				var spine_idx := skeleton.find_bone("Spine")
-				if spine_idx != -1:
-					# Permanently scale down rest poses of upper body bones so they are completely hidden
-					# and never reset to scale 1.0 by the animation engine!
-					for i in range(skeleton.get_bone_count()):
-						if is_descendant_of_spine(skeleton, i, spine_idx):
-							var rest := skeleton.get_bone_rest(i)
-							rest.basis = Basis.from_scale(Vector3.ZERO)
-							skeleton.set_bone_rest(i, rest)
-							skeleton.set_bone_pose_scale(i, Vector3.ZERO)
-							
-					for anim_name in lib.get_animation_list():
-						var anim := lib.get_animation(anim_name)
-						if anim != null:
-							for track_idx in range(anim.get_track_count() - 1, -1, -1):
-								var path := anim.track_get_path(track_idx)
-								var bone_name := ""
-								if path.get_subname_count() > 0:
-									bone_name = path.get_subname(0)
-								elif ":" in str(path):
-									bone_name = str(path).split(":")[-1]
-									
-								if bone_name != "":
-									var bone_idx := skeleton.find_bone(bone_name)
-									if bone_idx != -1 and is_descendant_of_spine(skeleton, bone_idx, spine_idx):
-										anim.remove_track(track_idx)
+				# Permanently scale down rest poses of upper body bones so they are completely hidden
+				# and never reset to scale 1.0 by the animation engine!
+				for i in range(skeleton.get_bone_count()):
+					if is_bone_to_collapse(skeleton, i):
+						var rest := skeleton.get_bone_rest(i)
+						rest.basis = Basis.from_scale(Vector3.ZERO)
+						skeleton.set_bone_rest(i, rest)
+						skeleton.set_bone_pose_scale(i, Vector3.ZERO)
+						
+				for anim_name in lib.get_animation_list():
+					var anim := lib.get_animation(anim_name)
+					if anim != null:
+						for track_idx in range(anim.get_track_count() - 1, -1, -1):
+							var path := anim.track_get_path(track_idx)
+							var bone_name := ""
+							if path.get_subname_count() > 0:
+								bone_name = path.get_subname(0)
+							elif ":" in str(path):
+								bone_name = str(path).split(":")[-1]
+								
+							if bone_name != "":
+								var bone_idx := skeleton.find_bone(bone_name)
+								if bone_idx != -1 and is_bone_to_collapse(skeleton, bone_idx):
+									anim.remove_track(track_idx)
 			
 			_anim_player.add_animation_library("", lib)
 			ModelUtils.set_animation_loops(_anim_player)
@@ -359,14 +360,18 @@ func _update_body_animation() -> void:
 		_cur_clip = want
 
 
-func is_descendant_of_spine(skeleton: Skeleton3D, bone_idx: int, spine_idx: int) -> bool:
-	if bone_idx == spine_idx:
-		return true
-	var parent := skeleton.get_bone_parent(bone_idx)
-	while parent != -1:
-		if parent == spine_idx:
+func is_bone_to_collapse(skeleton: Skeleton3D, bone_idx: int) -> bool:
+	var collapse_names := [
+		"UpperChest", "Neck", "Head",
+		"LeftShoulder", "LeftUpperArm", "LeftLowerArm", "LeftHand",
+		"RightShoulder", "RightUpperArm", "RightLowerArm", "RightHand"
+	]
+	var cur := bone_idx
+	while cur != -1:
+		var name := skeleton.get_bone_name(cur)
+		if collapse_names.has(name):
 			return true
-		parent = skeleton.get_bone_parent(parent)
+		cur = skeleton.get_bone_parent(cur)
 	return false
 
 
@@ -376,12 +381,6 @@ func _hide_head() -> void:
 	var skeletons := _mesh_root.find_children("*", "Skeleton3D")
 	if skeletons.size() > 0:
 		var skeleton: Skeleton3D = skeletons[0]
-		
-		# Scale down all upper body bones (Spine, Chest, UpperChest, Neck, Head, shoulders, arms, hands)
-		# individually to Vector3.ZERO. This hides the entire upper body in first-person, preventing any hollow mesh clipping,
-		# while leaving the hips, legs, and feet fully visible when looking down.
-		var spine_idx := skeleton.find_bone("Spine")
-		if spine_idx != -1:
-			for i in range(skeleton.get_bone_count()):
-				if is_descendant_of_spine(skeleton, i, spine_idx):
-					skeleton.set_bone_pose_scale(i, Vector3.ZERO)
+		for i in range(skeleton.get_bone_count()):
+			if is_bone_to_collapse(skeleton, i):
+				skeleton.set_bone_pose_scale(i, Vector3.ZERO)
