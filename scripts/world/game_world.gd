@@ -174,7 +174,8 @@ func _on_intro_start_pressed() -> void:
 	if root:
 		tw.tween_property(root, "modulate:a", 0.0, 0.4)
 		await tw.finished
-	_intro_canvas.queue_free()
+	if is_instance_valid(_intro_canvas):
+		_intro_canvas.queue_free()
 	_intro_canvas = null
 
 # ---------------------------------------------------------------------------
@@ -617,9 +618,15 @@ var _downed_status: Label = null
 var _downed_bar: ProgressBar = null
 
 func _on_net_message(type: String, msg: Dictionary, from_player: int) -> void:
+	# Debug: see all incoming messages in the console
+	print("[NET] type=%s from=%d" % [type, from_player])
 	match type:
 		"pos":
 			var rp = _remote_players.get(from_player)
+			# Fallback: if from_player is -1 or unknown, route to the first
+			# remote player we have (works for 2-player sessions).
+			if rp == null and _remote_players.size() > 0:
+				rp = _remote_players.values()[0]
 			if rp and is_instance_valid(rp) and rp.has_method("update_target"):
 				rp.update_target(msg)
 		"snus":
