@@ -173,9 +173,9 @@ const DRONE_PITCH := 0.72              # menu theme slowed into a deep room-tone
 var _amb_tween: Tween = null
 
 func _setup_ambient() -> void:
-	# The menu theme must not bleed into the run — the bed takes over.
+	# Keep the game's ambient music playing seamlessly from the main menu!
 	if has_node("/root/AudioManager"):
-		AudioManager.fade_out_music(2.0)
+		AudioManager.play_music(load("res://assets/audio/ambient/ambient.mp3"), -8.0, 1.0)
 	# The bed NEVER stops outside the post-jumpscare beat:
 	# deep drone underneath, dark hum on top, HVAC breathing far away.
 	_hum = _make_loop(HUM_PATH, HUM_VOL)

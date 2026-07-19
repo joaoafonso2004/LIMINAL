@@ -42,7 +42,7 @@ const PRELOAD_PATHS: PackedStringArray = [
 	"res://assets/audio/ambient/ambient_backrooms_office_fluorescent_hum_loop.mp3",
 	"res://assets/audio/ambient/ambient_empty_building_hvac_drone_loop.mp3",
 	"res://assets/audio/music/music_climax_final_exit_drone.mp3",
-	"res://assets/audio/music/music_exploration_liminal_dread_theme.mp3",
+	"res://assets/audio/ambient/ambient.mp3",
 	"res://assets/audio/sfx/enemy/enemy_chase_distorted_scream.mp3",
 	"res://assets/audio/sfx/enemy/enemy_close_breath.mp3",
 	"res://assets/audio/sfx/enemy/enemy_entity_heavy_steps.mp3",
