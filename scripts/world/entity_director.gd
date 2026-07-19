@@ -1819,16 +1819,15 @@ func _tick_roam(delta: float) -> void:
 		return
 		
 	var d := _figure.global_position.distance_to(_player.global_position)
+	var crouched: bool = bool(_player.is_crouching) if is_instance_valid(_player) and "is_crouching" in _player else false
 	
 	# Detection check: entity spots player
 	var entity_sees_player := _ray_clear(_figure.global_position + Vector3(0, 1.5, 0), _camera.global_position)
-	var entity_spot_range := 11.0
-	if "is_crouching" in _player and _player.is_crouching:
-		entity_spot_range = 5.5
+	var entity_spot_range := 3.5 if crouched else 12.0
 		
 	# Detection check: player spots entity
 	var player_sees_entity := _player_looking_at(_figure, 0.25) and _has_los(_figure)
-	var player_spot_range := 15.0
+	var player_spot_range := 4.0 if crouched else 15.0
 	
 	if (entity_sees_player and d < entity_spot_range) or (player_sees_entity and d < player_spot_range):
 		_trigger_roam_to_chase()
@@ -1867,7 +1866,8 @@ func _roam_move(delta: float, dist_to_player: float) -> void:
 	var step_dir := target - _figure.global_position
 	step_dir.y = 0
 	if step_dir.length() > 0.01:
-		_figure.global_position += step_dir.normalized() * 1.2 * delta
+		# Fast purposeful roaming speed (2.6 m/s)
+		_figure.global_position += step_dir.normalized() * 2.6 * delta
 		var face := _figure.global_position + step_dir
 		face.y = _figure.global_position.y
 		if _figure.global_position.distance_to(face) > 0.05:
