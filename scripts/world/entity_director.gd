@@ -400,6 +400,12 @@ func _dispatch(kind: String) -> bool:
 		return false
 	if not has_node("/root/NetManager"):
 		return false
+	
+	if kind == "jump":
+		_world.net_send("scare_all", {"kind": "jump"})
+		_begin_jump(_now())
+		return true
+		
 	var ids: Array = _world.alive_player_ids()
 	if ids.is_empty():
 		return false
@@ -1375,7 +1381,7 @@ func _net_fig_tick(delta: float) -> void:
 		_net_fig_watchdog -= delta
 		if _net_fig_watchdog <= 0.0:
 			mirror_off()
-	var have := is_instance_valid(_figure) and _mode != "stalk"
+	var have := is_instance_valid(_figure) and _mode != "stalk" and _mode != "jump"
 	if have:
 		_owns_fig = true
 		_fig_send_timer -= delta
