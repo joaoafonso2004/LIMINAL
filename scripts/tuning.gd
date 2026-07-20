@@ -109,7 +109,7 @@ const SHADOW_MAX_TIME := 45.0           # a tail never outstays this
 # Vultos — chase
 # ---------------------------------------------------------------------------
 const CHASE_MAX_PER_RUN := 2
-const CHASE_SPEED := 5.6                # faster than the player's short 4.75 m/s sprint
+const CHASE_SPEED := 7.2                # High-speed terrifying scuttle (Player sprint is 4.75 m/s)
 const CHASE_SPAWN_MIN := 17.0           # heard at range before the charge enters view
 const CHASE_SPAWN_MAX := 25.0
 const CATCH_DIST := 1.35

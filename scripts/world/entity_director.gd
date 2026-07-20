@@ -1165,7 +1165,11 @@ func _launch_chase() -> void:
 		return
 	_set_figure_alpha(1.0)
 	_face_player(_figure)
-	_play_anim("ual1_Sprint")
+	if is_instance_valid(_anim_player) and _anim_player.has_animation("crawl_chase"):
+		_anim_player.play("crawl_chase")
+		_anim_player.speed_scale = 2.2
+	else:
+		_play_anim("ual1_Sprint")
 	_chase_state = "pursue"
 	_last_seen_pos = _player.global_position
 	_has_seen_player_this_chase = false
@@ -1957,31 +1961,42 @@ func _figure_pose_clear(pos: Vector3) -> bool:
 func _apply_chase_contortions(delta: float) -> void:
 	if not is_instance_valid(_figure):
 		return
+
+	# Crawling nightmare posture: entity drops low to the carpet, pitches forward on all fours, and scuttles
+	if _figure.get_child_count() > 0:
+		var model_node := _figure.get_child(0) as Node3D
+		if model_node:
+			model_node.position.y = lerpf(model_node.position.y, -0.68, 14.0 * delta)
+			model_node.rotation.x = lerpf(model_node.rotation.x, 1.25, 14.0 * delta)
+			var t_crawl := Time.get_ticks_msec() / 1000.0
+			model_node.rotation.z = sin(t_crawl * 28.0) * 0.14 # rapid unnerving scuttle sway
+
 	var skeletons = _figure.find_children("*", "Skeleton3D")
 	if skeletons.size() == 0:
 		return
 	var skeleton: Skeleton3D = skeletons[0]
 	var t := Time.get_ticks_msec() / 1000.0
-	var twitch_wave := sin(t * 36.0)
-	var twist_wave := cos(t * 26.0)
+	var twitch_wave := sin(t * 42.0)
+	var twist_wave := cos(t * 30.0)
 
 	var spine_idx := skeleton.find_bone("Spine")
 	if spine_idx != -1:
 		var rot := Quaternion(Vector3.UP, twist_wave * 0.42) * Quaternion(Vector3.RIGHT, twitch_wave * 0.15)
 		skeleton.set_bone_pose_rotation(spine_idx, rot)
 
+	# Head tilts UPWARDS to stay locked onto player's eyes while body crawls low on carpet!
 	var neck_idx := skeleton.find_bone("Neck")
 	if neck_idx != -1:
-		var rot := Quaternion(Vector3.FORWARD, twitch_wave * 0.58) * Quaternion(Vector3.UP, twist_wave * 0.25)
+		var rot := Quaternion(Vector3.RIGHT, -1.1) * Quaternion(Vector3.FORWARD, twitch_wave * 0.45)
 		skeleton.set_bone_pose_rotation(neck_idx, rot)
 
 	var l_arm_idx := skeleton.find_bone("LeftUpperArm")
 	if l_arm_idx != -1:
-		var rot := Quaternion(Vector3.BACK, 1.25 + twitch_wave * 0.55) * Quaternion(Vector3.UP, twist_wave * 0.7)
+		var rot := Quaternion(Vector3.BACK, 1.45 + twitch_wave * 0.65) * Quaternion(Vector3.UP, twist_wave * 0.8)
 		skeleton.set_bone_pose_rotation(l_arm_idx, rot)
 	var r_arm_idx := skeleton.find_bone("RightUpperArm")
 	if r_arm_idx != -1:
-		var rot := Quaternion(Vector3.FORWARD, -1.25 + twist_wave * 0.55) * Quaternion(Vector3.UP, twitch_wave * 0.7)
+		var rot := Quaternion(Vector3.FORWARD, -1.45 + twist_wave * 0.65) * Quaternion(Vector3.UP, twitch_wave * 0.8)
 		skeleton.set_bone_pose_rotation(r_arm_idx, rot)
 
 
