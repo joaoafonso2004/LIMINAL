@@ -6,37 +6,39 @@ extends Control
 
 const GAME_WORLD_PATH: String = "res://scenes/game_world.tscn"
 
-const BG_PATH: String = "res://assets/textures/backgrounds/menu_void_corridor.png"
-const WORDMARK_PATH: String = "res://assets/ui/wordmark_title.png"
-const THEME_PATH: String = "res://assets/ui/theme.tres"
-const FONT_PATH: String = "res://assets/fonts/special_elite.ttf"
+const BG_PATH: String = "res://assets/textures/backgrounds/menu_backrooms_blurred.png"
 const MUSIC_PATH: String = "res://assets/audio/ambient/ambient.mp3"
 
-const DIM_YELLOW: Color = Color(0.72, 0.66, 0.42)
+const PAPER := Color(0.88, 0.86, 0.75, 1.0)
+const MUTED := Color(0.52, 0.52, 0.46, 1.0)
+const WALL_YELLOW := Color(0.78, 0.70, 0.48, 1.0)
 
 var _font: Font = null
-var _wordmark: TextureRect = null
+var _font_heavy: Font = null
+var _default_focus: Button = null
 
 var _main_col: VBoxContainer = null
 var _mp_col: VBoxContainer = null
 var _options: Control = null
 var _status: Label = null
+var _rules_preset: OptionButton = null
+var _modifier_menu: MenuButton = null
+var _custom_rules: Dictionary = {}
 
 
 func _ready() -> void:
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	if ResourceLoader.exists(THEME_PATH):
-		theme = load(THEME_PATH)
-	if ResourceLoader.exists(FONT_PATH):
-		_font = load(FONT_PATH)
+	_font = UIKit.utilitarian_font(350)
+	_font_heavy = UIKit.utilitarian_font(800)
 
 	_build_backdrop()
-	_build_wordmark()
+	_build_identity()
 	_build_main_column()
 	_build_mp_column()
 	_start_audio()
-	_start_wordmark_flicker()
+	if is_instance_valid(_default_focus):
+		_default_focus.grab_focus.call_deferred()
 
 	# Ensure a clean network slate whenever we return to the menu.
 	if has_node("/root/NetManager"):
@@ -51,104 +53,149 @@ func _build_backdrop() -> void:
 		bg.texture = load(BG_PATH)
 	bg.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	bg.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
-	bg.modulate = Color(0.8, 0.8, 0.8)
+	bg.modulate = Color(0.84, 0.82, 0.74)
 	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(bg)
 	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 
 	var scrim := ColorRect.new()
-	scrim.color = Color(0, 0, 0, 0.38)
+	scrim.color = Color(0.015, 0.016, 0.014, 0.24)
 	scrim.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(scrim)
 	scrim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 
+func _build_identity() -> void:
+	var title := Label.new()
+	title.text = "LIMINAL"
+	title.position = Vector2(66, 64)
+	title.size = Vector2(390, 82)
+	title.add_theme_font_override("font", _font_heavy)
+	title.add_theme_font_size_override("font_size", 62)
+	title.add_theme_color_override("font_color", WALL_YELLOW)
+	title.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(title)
 
-func _build_wordmark() -> void:
-	_wordmark = TextureRect.new()
-	_wordmark.name = "Wordmark"
-	if ResourceLoader.exists(WORDMARK_PATH):
-		_wordmark.texture = load(WORDMARK_PATH)
-	_wordmark.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	_wordmark.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-	_wordmark.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(_wordmark)
-	_wordmark.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP)
-	_wordmark.offset_left = -320.0
-	_wordmark.offset_right = 320.0
-	_wordmark.offset_top = 70.0
-	_wordmark.offset_bottom = 290.0
-
-	# Author Credit — "Made by João Afonso"
 	var author := Label.new()
-	author.name = "AuthorCredit"
-	author.text = "Made by João Afonso"
-	author.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	author.text = "JOÃO AFONSO"
+	author.anchor_top = 1.0
+	author.anchor_bottom = 1.0
+	author.offset_left = 70.0
+	author.offset_right = 430.0
+	author.offset_top = -74.0
+	author.offset_bottom = -46.0
+	author.add_theme_font_override("font", _font)
+	author.add_theme_font_size_override("font_size", 13)
+	author.add_theme_color_override("font_color", WALL_YELLOW.darkened(0.18))
 	author.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	author.add_theme_color_override("font_color", Color(0.95, 0.82, 0.45, 0.9))
-	author.add_theme_font_size_override("font_size", 18)
-	if _font:
-		author.add_theme_font_override("font", _font)
 	add_child(author)
-	author.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP)
-	author.offset_left = -300.0
-	author.offset_right = 300.0
-	author.offset_top = 292.0
-	author.offset_bottom = 320.0
 
 
-func _make_art_button(label: String, w: float = 288.0) -> Button:
-	# Flat code-styled button (the kit art has "ENTER" baked in — unusable
-	# for anything but that one label; see UIKit).
+func _make_art_button(label: String, w: float = 370.0) -> Button:
 	var b := Button.new()
 	b.text = label
-	b.custom_minimum_size = Vector2(w, 72)
-	b.focus_mode = Control.FOCUS_NONE
-	b.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	UIKit.style_button(b, _font, 26)
+	b.custom_minimum_size = Vector2(w, 58)
+	b.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	UIKit.style_brutalist_button(b, 20)
+	_style_main_menu_button(b)
 	return b
+
+
+func _menu_button_box(fill: Color, left_width: int) -> StyleBoxFlat:
+	var box := StyleBoxFlat.new()
+	box.bg_color = fill
+	box.border_color = WALL_YELLOW
+	box.border_width_left = left_width
+	box.content_margin_left = 22.0
+	box.content_margin_right = 18.0
+	box.content_margin_top = 11.0
+	box.content_margin_bottom = 11.0
+	return box
+
+
+func _style_main_menu_button(button: Button) -> void:
+	button.add_theme_stylebox_override("normal", _menu_button_box(Color.TRANSPARENT, 1))
+	button.add_theme_stylebox_override("hover", _menu_button_box(WALL_YELLOW, 6))
+	button.add_theme_stylebox_override("focus", _menu_button_box(WALL_YELLOW, 6))
+	button.add_theme_stylebox_override("pressed", _menu_button_box(WALL_YELLOW, 6))
+	button.add_theme_color_override("font_color", PAPER)
+	button.add_theme_color_override("font_hover_color", Color(0.04, 0.04, 0.025))
+	button.add_theme_color_override("font_focus_color", Color(0.04, 0.04, 0.025))
+	button.add_theme_color_override("font_pressed_color", Color(0.04, 0.04, 0.025))
 
 
 func _column() -> VBoxContainer:
 	var vb := VBoxContainer.new()
-	vb.alignment = BoxContainer.ALIGNMENT_CENTER
-	vb.add_theme_constant_override("separation", 16)
+	vb.alignment = BoxContainer.ALIGNMENT_BEGIN
+	vb.add_theme_constant_override("separation", 8)
 	add_child(vb)
-	vb.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
-	vb.offset_left = -240.0
-	vb.offset_right = 240.0
-	vb.offset_top = 30.0
-	vb.offset_bottom = 330.0
+	vb.anchor_left = 0.0
+	vb.anchor_top = 0.0
+	vb.offset_left = 70.0
+	vb.offset_right = 450.0
+	vb.offset_top = 322.0
+	vb.offset_bottom = 850.0
 	return vb
 
 
 func _build_main_column() -> void:
 	_main_col = _column()
 
-	var solo := _make_art_button("ENTER")
+	var solo := _make_art_button("PLAY")
 	solo.pressed.connect(_on_play_solo)
 	_main_col.add_child(solo)
+	_default_focus = solo
 
 	var coop := _make_art_button("CO-OP")
 	coop.pressed.connect(_on_show_mp)
 	_main_col.add_child(coop)
 
-	var options := _make_art_button("OPTIONS")
+	var options := _make_art_button("SETTINGS")
 	options.pressed.connect(_on_show_options)
 	_main_col.add_child(options)
+
+	var quit := _make_art_button("QUIT")
+	quit.pressed.connect(get_tree().quit)
+	_main_col.add_child(quit)
 
 
 func _build_mp_column() -> void:
 	_mp_col = _column()
 	_mp_col.visible = false
+	_mp_col.offset_top = 244.0
+	_mp_col.offset_bottom = 900.0
+	_mp_col.add_theme_constant_override("separation", 8)
+	_custom_rules = NetManager.default_rules() if has_node("/root/NetManager") else {}
+
+	var rules_row := HBoxContainer.new()
+	rules_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	rules_row.add_theme_constant_override("separation", 8)
+	_mp_col.add_child(rules_row)
+	_rules_preset = OptionButton.new()
+	_rules_preset.custom_minimum_size = Vector2(181, 48)
+	_rules_preset.add_item("NORMAL")
+	_rules_preset.add_item("NIGHTMARE")
+	_rules_preset.add_item("CUSTOM")
+	_rules_preset.item_selected.connect(_on_rules_preset_selected)
+	UIKit.style_brutalist_button(_rules_preset, 15)
+	rules_row.add_child(_rules_preset)
+	_modifier_menu = MenuButton.new()
+	_modifier_menu.text = "MODIFIERS"
+	_modifier_menu.custom_minimum_size = Vector2(181, 48)
+	UIKit.style_brutalist_button(_modifier_menu, 15)
+	rules_row.add_child(_modifier_menu)
+	var popup := _modifier_menu.get_popup()
+	for entry in [[0, "NO LOCKERS"], [1, "ONE LIFE"], [2, "SPAWN TOGETHER"], [3, "NO MIMIC"], [4, "NO SPRINT"], [5, "DARKER"]]:
+		popup.add_check_item(entry[1], entry[0])
+	popup.id_pressed.connect(_on_modifier_pressed)
 
 	# Host row: pick how many descend together — the room starts when full,
 	# so the host must choose the real group size (2, 3 or 4).
 	var host_label := Label.new()
 	host_label.text = "HOST"
-	host_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	host_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
 	host_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	host_label.add_theme_color_override("font_color", DIM_YELLOW)
-	host_label.add_theme_font_size_override("font_size", 18)
+	host_label.add_theme_color_override("font_color", MUTED)
+	host_label.add_theme_font_size_override("font_size", 13)
 	if _font:
 		host_label.add_theme_font_override("font", _font)
 	_mp_col.add_child(host_label)
@@ -158,7 +205,8 @@ func _build_mp_column() -> void:
 	host_row.add_theme_constant_override("separation", 8)
 	_mp_col.add_child(host_row)
 	for n in [2, 3, 4]:
-		var host_btn := _make_art_button(str(n), 108.0)
+		var host_btn := _make_art_button(str(n), 118.0)
+		host_btn.custom_minimum_size.y = 48.0
 		host_btn.pressed.connect(_on_host.bind(n))
 		host_row.add_child(host_btn)
 
@@ -170,32 +218,32 @@ func _build_mp_column() -> void:
 	var code_input := LineEdit.new()
 	code_input.name = "CodeInput"
 	code_input.placeholder_text = "CODE"
-	code_input.alignment = HORIZONTAL_ALIGNMENT_CENTER
+	code_input.alignment = HORIZONTAL_ALIGNMENT_LEFT
 	code_input.max_length = 8
-	code_input.custom_minimum_size = Vector2(150, 60)
-	if _font:
-		code_input.add_theme_font_override("font", _font)
-	code_input.add_theme_font_size_override("font_size", 26)
+	code_input.custom_minimum_size = Vector2(174, 52)
+	UIKit.style_brutalist_input(code_input, 19)
 	join_row.add_child(code_input)
 
-	var join := _make_art_button("JOIN", 160.0)
+	var join := _make_art_button("JOIN", 188.0)
+	join.custom_minimum_size.y = 52.0
 	join.pressed.connect(_on_join.bind(code_input))
 	join_row.add_child(join)
 
 	_status = Label.new()
 	_status.name = "Status"
 	_status.text = ""
-	_status.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_status.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
 	_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_status.custom_minimum_size = Vector2(460, 60)
+	_status.custom_minimum_size = Vector2(460, 48)
 	_status.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_status.add_theme_color_override("font_color", DIM_YELLOW)
-	_status.add_theme_font_size_override("font_size", 18)
+	_status.add_theme_color_override("font_color", PAPER)
+	_status.add_theme_font_size_override("font_size", 15)
 	if _font:
 		_status.add_theme_font_override("font", _font)
 	_mp_col.add_child(_status)
 
 	var back := _make_art_button("BACK", 160.0)
+	back.custom_minimum_size.y = 48.0
 	back.pressed.connect(_on_mp_back)
 	_mp_col.add_child(back)
 
@@ -228,7 +276,9 @@ func _on_show_options() -> void:
 		_options.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 		_options.closed.connect(func():
 			_options.visible = false
-			_main_col.visible = true)
+			_main_col.visible = true
+			if is_instance_valid(_default_focus):
+				_default_focus.grab_focus())
 	_main_col.visible = false
 	_options.visible = true
 
@@ -238,12 +288,15 @@ func _on_mp_back() -> void:
 		NetManager.disconnect_from_room()
 	_mp_col.visible = false
 	_main_col.visible = true
+	if is_instance_valid(_default_focus):
+		_default_focus.grab_focus()
 
 
 func _on_host(player_count: int) -> void:
 	if not has_node("/root/NetManager"):
 		return
 	NetManager.is_multiplayer = true
+	NetManager.configure_rules(_selected_rules())
 	_connect_lobby_signals()
 	NetManager.create_room(player_count)
 	_set_status("Creating a room for " + str(player_count) + "…")
@@ -288,7 +341,47 @@ func _on_player_joined(pid: int, total: int) -> void:
 
 func _on_all_players_joined() -> void:
 	_set_status("Everyone's in! Descending into the Backrooms…")
+	if NetManager.is_host:
+		NetManager.send("rules", {"rules": NetManager.run_rules})
 	get_tree().create_timer(1.2).timeout.connect(_start_game)
+
+func _on_rules_preset_selected(index: int) -> void:
+	_custom_rules = NetManager.default_rules()
+	if index == 1:
+		_custom_rules["preset"] = "nightmare"
+		_custom_rules["entity_speed"] = 1.14
+		_custom_rules["darkness"] = 1.25
+		_custom_rules["phone_traps"] = 0.55
+		_custom_rules["revive_seconds"] = 22.0
+	_update_modifier_checks()
+
+func _on_modifier_pressed(id: int) -> void:
+	if _custom_rules.is_empty():
+		_custom_rules = NetManager.default_rules()
+	match id:
+		0: _custom_rules["lockers"] = not bool(_custom_rules.get("lockers", true))
+		1: _custom_rules["one_life"] = not bool(_custom_rules.get("one_life", false))
+		2: _custom_rules["separated_spawns"] = not bool(_custom_rules.get("separated_spawns", true))
+		3: _custom_rules["mimic"] = not bool(_custom_rules.get("mimic", true))
+		4: _custom_rules["sprint"] = not bool(_custom_rules.get("sprint", true))
+		5: _custom_rules["darkness"] = 1.0 if float(_custom_rules.get("darkness", 1.0)) > 1.0 else 1.35
+	_custom_rules["preset"] = "custom"
+	_rules_preset.select(2)
+	_update_modifier_checks()
+
+func _update_modifier_checks() -> void:
+	if not is_instance_valid(_modifier_menu):
+		return
+	var popup := _modifier_menu.get_popup()
+	popup.set_item_checked(popup.get_item_index(0), not bool(_custom_rules.get("lockers", true)))
+	popup.set_item_checked(popup.get_item_index(1), bool(_custom_rules.get("one_life", false)))
+	popup.set_item_checked(popup.get_item_index(2), not bool(_custom_rules.get("separated_spawns", true)))
+	popup.set_item_checked(popup.get_item_index(3), not bool(_custom_rules.get("mimic", true)))
+	popup.set_item_checked(popup.get_item_index(4), not bool(_custom_rules.get("sprint", true)))
+	popup.set_item_checked(popup.get_item_index(5), float(_custom_rules.get("darkness", 1.0)) > 1.0)
+
+func _selected_rules() -> Dictionary:
+	return _custom_rules.duplicate(true) if not _custom_rules.is_empty() else NetManager.default_rules()
 
 
 func _on_join(code_input: LineEdit) -> void:
@@ -325,14 +418,3 @@ func _start_audio() -> void:
 		var am := get_node("/root/AudioManager")
 		if am.has_method("play_music"):
 			am.play_music(load(MUSIC_PATH), -8.0, 2.0)
-
-
-func _start_wordmark_flicker() -> void:
-	if not is_instance_valid(_wordmark):
-		return
-	var tw := _wordmark.create_tween()
-	tw.set_loops()
-	tw.set_trans(Tween.TRANS_SINE)
-	tw.set_ease(Tween.EASE_IN_OUT)
-	tw.tween_property(_wordmark, "modulate:a", 0.75, 2.4)
-	tw.tween_property(_wordmark, "modulate:a", 1.0, 2.4)

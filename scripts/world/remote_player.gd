@@ -2,8 +2,11 @@ extends CharacterBody3D
 ## A networked puppet body for another player. Never reads input — its
 ## transform is driven entirely by network messages via update_target().
 
+signal footstep_emitted(world_position: Vector3, audible_range: float, kind: String)
+
 const MODEL_PATH := "res://assets/characters/survivor_body/survivor_body.glb"
 const ANIM_PATH := "res://assets/characters/survivor_body/survivor_body_animations.tres"
+const STEP_PATH := "res://assets/audio/sfx/player/player_player_step_carpet.mp3"
 
 const LERP_WEIGHT := 12.0
 const WALK_THRESHOLD := 0.6
@@ -20,14 +23,27 @@ var _target_rot_y: float
 var _prev_actual_pos: Vector3
 var _speed_smooth: float
 var _got_first: bool = false
+var _net_sprinting := false
+var _net_crouching := false
+var _step_distance := 0.0
+var _step_stream: AudioStream = null
+
+const PLAYER_TINTS := [
+	Color(0.72, 0.58, 0.34),
+	Color(0.34, 0.52, 0.68),
+	Color(0.48, 0.66, 0.42),
+	Color(0.62, 0.38, 0.46),
+]
 
 
 var is_downed := false
-var _revive_beacon: Label3D = null
 
 func _ready() -> void:
 	collision_layer = 4
 	collision_mask = 0
+	set_meta("player_id", player_id)
+	if ResourceLoader.exists(STEP_PATH):
+		_step_stream = load(STEP_PATH)
 
 	# Harmless capsule collider for completeness (mask=0, so it never blocks).
 	var col := CollisionShape3D.new()
@@ -41,18 +57,6 @@ func _ready() -> void:
 	_mesh_root = Node3D.new()
 	_mesh_root.name = "MeshRoot"
 	add_child(_mesh_root)
-
-	# 3D Revive Beacon above downed teammate's head
-	_revive_beacon = Label3D.new()
-	_revive_beacon.text = "[+] NEED REVIVE"
-	_revive_beacon.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-	_revive_beacon.no_depth_test = true
-	_revive_beacon.position = Vector3(0, 2.25, 0)
-	_revive_beacon.modulate = Color(1.0, 0.25, 0.25, 1.0)
-	_revive_beacon.outline_modulate = Color(0, 0, 0, 1.0)
-	_revive_beacon.font_size = 28
-	_revive_beacon.visible = false
-	add_child(_revive_beacon)
 
 	var model: Node3D = _load_model()
 	if model != null:
@@ -71,8 +75,6 @@ func set_downed(v: bool) -> void:
 			tw.tween_property(_mesh_root, "rotation:x", -PI * 0.45, 0.35)
 		else:
 			tw.tween_property(_mesh_root, "rotation:x", 0.0, 0.35)
-	if is_instance_valid(_revive_beacon):
-		_revive_beacon.visible = v
 
 
 ## Load and instance the survivor GLB, or null if unavailable.
@@ -89,6 +91,7 @@ func _load_model() -> Node3D:
 ## Configure a successfully-loaded model: scale, normals, animation.
 func _setup_model(model: Node3D) -> void:
 	ModelUtils.setup_character_for_movement(model, 1.8)
+	_apply_player_tint(model)
 
 	# Guard against a dark mesh from missing vertex normals.
 	var meshes := model.find_children("*", "MeshInstance3D")
@@ -110,6 +113,21 @@ func _setup_model(model: Node3D) -> void:
 				_cur_clip = "ual1_Idle"
 
 
+func _apply_player_tint(model: Node3D) -> void:
+	var tint: Color = PLAYER_TINTS[posmod(player_id, PLAYER_TINTS.size())]
+	for child in model.find_children("*", "MeshInstance3D"):
+		var mi := child as MeshInstance3D
+		if mi == null or mi.mesh == null:
+			continue
+		for surface in mi.mesh.get_surface_count():
+			var source := mi.get_active_material(surface)
+			if source is StandardMaterial3D:
+				var mat := (source as StandardMaterial3D).duplicate(true) as StandardMaterial3D
+				mat.albedo_color = mat.albedo_color * tint
+				mi.set_surface_override_material(surface, mat)
+	set_meta("player_tint", tint)
+
+
 ## Build a dim capsule so a body is always visible even without the GLB.
 func _build_fallback_body() -> void:
 	var mi := MeshInstance3D.new()
@@ -118,7 +136,7 @@ func _build_fallback_body() -> void:
 	mesh.radius = 0.3
 	mi.mesh = mesh
 	var mat := StandardMaterial3D.new()
-	mat.albedo_color = Color(0.2, 0.2, 0.2)
+	mat.albedo_color = PLAYER_TINTS[posmod(player_id, PLAYER_TINTS.size())] * 0.6
 	mi.material_override = mat
 	mi.position.y = 0.85
 	_mesh_root.add_child(mi)
@@ -131,6 +149,8 @@ func update_target(msg: Dictionary) -> void:
 		float(msg.get("y", 0.0)),
 		float(msg.get("z", 0.0)))
 	_target_rot_y = float(msg.get("ry", 0.0))
+	_net_sprinting = bool(msg.get("spr", false))
+	_net_crouching = bool(msg.get("cr", false))
 
 	if not _got_first:
 		_got_first = true
@@ -147,8 +167,6 @@ func set_dead(v: bool) -> void:
 		# Collapse the body flat on the ground
 		var tw := create_tween()
 		tw.tween_property(_mesh_root, "rotation:x", -PI * 0.5, 0.5)
-		if is_instance_valid(_revive_beacon):
-			_revive_beacon.visible = false
 	else:
 		var tw := create_tween()
 		tw.tween_property(_mesh_root, "rotation:x", 0.0, 0.35)
@@ -163,8 +181,15 @@ func _process(delta: float) -> void:
 	rotation.y = lerp_angle(rotation.y, _target_rot_y, w)
 
 	var moved: float = (global_position - _prev_actual_pos).length() / maxf(delta, 0.001)
+	var frame_distance := global_position.distance_to(_prev_actual_pos)
 	_prev_actual_pos = global_position
 	_speed_smooth = lerp(_speed_smooth, moved, 10.0 * delta)
+	if _speed_smooth > WALK_THRESHOLD and not is_downed:
+		_step_distance += frame_distance
+		var stride := 1.05 if _net_sprinting else (1.65 if _net_crouching else 1.35)
+		if _step_distance >= stride:
+			_step_distance = 0.0
+			_play_remote_step()
 
 	_update_animation()
 
@@ -172,9 +197,35 @@ func _process(delta: float) -> void:
 func _update_animation() -> void:
 	if _anim_player == null:
 		return
-	var want: String = "ual1_Walk" if _speed_smooth > WALK_THRESHOLD else "ual1_Idle"
+	# The clips alone have a similar-looking cadence. Explicit playback speed
+	# makes remote legs match the actual networked movement state.
+	_anim_player.speed_scale = 1.5 if _net_sprinting else (0.78 if _net_crouching else 1.0)
+	var want := "ual1_Idle"
+	if _speed_smooth > WALK_THRESHOLD:
+		want = "ual1_Sprint" if _net_sprinting else "ual1_Walk"
 	if want == _cur_clip:
 		return
 	if _anim_player.has_animation(want):
 		_anim_player.play(want)
 		_cur_clip = want
+
+
+func _play_remote_step() -> void:
+	if _step_stream == null or not has_node("/root/AudioManager"):
+		return
+	var volume := -18.0
+	var pitch := randf_range(0.78, 0.94)
+	var audible_range := Tuning.NOISE_RANGE_WALK
+	var kind := "walk"
+	if _net_sprinting:
+		volume = -10.0
+		pitch = randf_range(0.94, 1.08)
+		audible_range = Tuning.NOISE_RANGE_SPRINT
+		kind = "sprint"
+	elif _net_crouching:
+		volume = -27.0
+		pitch = randf_range(0.68, 0.82)
+		audible_range = Tuning.NOISE_RANGE_CROUCH
+		kind = "crouch"
+	AudioManager.play_sfx_3d(self, _step_stream, global_position, volume, 30.0, pitch)
+	footstep_emitted.emit(global_position, audible_range, kind)

@@ -2,91 +2,73 @@
 
 ![LIMINAL Banner](assets/ui/liminal_banner.png)
 
-### **Made by João Afonso**
+### Made by João Afonso
 
-Jogo de terror psicológico na primeira pessoa, tipo Backrooms. Acordas num piso
-de escritórios infinito — Level 0 — visto através de um sinal de TV antiga que
-adoece à medida que o medo sobe. Encontra as 5 latas de snus para desbloquear a
-única saída real. Não estás sozinho: os vultos observam-te ao longe, escondem-se
-quando os encaras, e desaparecem se os fores procurar. A partir de certa altura,
-correm atrás de ti.
+Jogo de terror psicológico na primeira pessoa inspirado nas Backrooms. Acordas
+num piso de escritórios impossível, visto através de um sinal de televisão que
+se degrada à medida que o perigo aumenta. Encontra cinco latas de Snus, ativa o
+botão de emergência e localiza a saída. Não estás sozinho.
 
-**Sem HUD, sem mapa, sem lanterna.** O som é o teu radar.
+Sem mapa nem lanterna. O som é o teu radar.
 
-## Jogar
+## Jogar no Windows
 
-### Windows (.exe)
+Descarrega `LIMINAL-windows.zip` em
+[Releases](https://github.com/joaoafonso2004/LIMINAL/releases), extrai o ficheiro
+e abre `LIMINAL.exe`. Não necessita de instalação nem de um `.pck` separado.
 
-Descarrega o `LIMINAL-windows.zip` da secção
-[Releases](https://github.com/joaoafonso2004/LIMINAL/releases), extrai e abre o
-`LIMINAL.exe`. Não precisa de instalação.
-
-### Controlos
+## Controlos
 
 | Tecla | Ação |
 |---|---|
-| W A S D | Andar |
+| W A S D | Movimento |
 | Rato | Olhar |
-| E | Apanhar snus |
-| Esc | Pausa |
+| Shift | Sprint |
+| Ctrl / C | Agachar |
+| E | Interagir |
+| Q | Gritar no co-op |
+| Esc | Pausa / menu local no co-op |
 
-## Co-op (2–4 jogadores) — como configurar
+## Co-op (2–4 jogadores)
 
-O co-op usa um relay público na internet — **não é preciso configurar servidor,
-abrir portas nem estar na mesma rede.** Basta que todos tenham o jogo e ligação
-à internet.
+O co-op usa um relay público: não é preciso abrir portas no router nem estar na
+mesma rede.
 
-### Passo a passo
+1. O host escolhe **CO-OP**, o tamanho do grupo e cria a sala.
+2. O jogo mostra um código que deve ser enviado aos restantes jogadores.
+3. Os amigos escrevem o código em **CODE** e selecionam **JOIN**.
+4. A partida começa quando a sala fica cheia.
 
-1. **Quem cria a sala (host):**
-   - Menu → **CO-OP**
-   - Em **HOST**, escolhe o tamanho do grupo: **2**, **3** ou **4**
-   - O jogo mostra um **código de sala** (ex.: `4590`) — envia-o aos teus amigos
-2. **Quem entra (os amigos):**
-   - Menu → **CO-OP**
-   - Escrever o código no campo **CODE** → **JOIN**
-3. **O jogo começa automaticamente quando a sala estiver cheia.**
-   Escolhe bem o tamanho: uma sala de 3 só arranca com 3 jogadores.
+### Regras principais
 
-### Regras do co-op
-
-- O labirinto é **idêntico para todos** e os snus são partilhados — qualquer um
-  pode apanhá-los, contam para a equipa toda.
-- Se **um** jogador chegar à saída, **toda a equipa escapa**.
-- Se a entidade te apanhar, ficas fora de combate a observar — os teus colegas
-  continuam. Se caírem **todos**, a run termina e recomeça.
-- Cada jogador tem os seus próprios sustos: os vultos que tu vês são só teus.
-
-### Problemas comuns
-
-- **"Could not join that room"** — código errado, sala já cheia ou sala expirada.
-  Confirma o código com o host (novo código a cada sala).
-- **"Could not reach the lobby server"** — sem internet ou o relay está em baixo.
-  Tenta de novo dentro de momentos.
-- Para desenvolvimento com relay local: define a variável de ambiente
-  `LIMINAL_RELAY` (ex.: `ws://localhost:8000`) antes de abrir o jogo.
+- O labirinto, os Snus e o progresso dos botões de emergência são partilhados.
+- Os jogadores começam separados; o grito 3D ajuda a reencontrar a equipa.
+- Um jogador caído pode gritar e ser reanimado durante a janela de revive.
+- Quando essa janela termina, passa a observar os colegas ainda vivos.
+- Sustos e aparições permanecem individuais para cada jogador.
+- Abrir o menu em co-op não pausa a simulação para os outros jogadores.
 
 ## Desenvolvimento
 
-Projeto **Godot 4** (testado com 4.6.1, renderer Compatibility/WebGL2).
+Projeto Godot 4, testado com Godot 4.6.1.
 
-1. Instala o [Godot 4.6+](https://godotengine.org/download)
-2. Abre o `project.godot`
-3. Corre a cena principal (`F5`)
+1. Instala o [Godot 4.6+](https://godotengine.org/download).
+2. Abre `project.godot`.
+3. Executa a cena principal com `F5`.
 
-Os valores de pacing/dificuldade/atmosfera estão centralizados em
-[`scripts/tuning.gd`](scripts/tuning.gd) e documentados em
-[`docs/design/game-design.md`](docs/design/game-design.md).
+Os valores de ritmo, dificuldade e atmosfera estão centralizados em
+[`scripts/tuning.gd`](scripts/tuning.gd).
+
+### Exportar o executável
+
+O preset **Windows Desktop** está incluído e incorpora o `.pck` dentro do `.exe`.
+
+```powershell
+godot --headless --path . --export-release "Windows Desktop" build/LIMINAL.exe
+```
 
 ## Créditos
 
+- Criação e direção: **João Afonso**
 - Sons da entidade: **juanjo_sound** — *Backrooms Entity SFX (Vol. 1)*
-
-### Exportar o .exe
-
-1. Editor → *Project → Export* (o preset **Windows Desktop** está incluído em
-   `export_presets.cfg`; instala os export templates quando o editor pedir)
-2. Ou por linha de comandos:
-   ```
-   godot --headless --path . --export-release "Windows Desktop" build/LIMINAL.exe
-   ```
+- Caveat font: SIL Open Font License 1.1

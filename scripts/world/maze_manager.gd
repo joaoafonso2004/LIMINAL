@@ -23,6 +23,8 @@ const LIGHT_RADIUS: int = 4
 const WALL_DENSITY: float = Tuning.WALL_DENSITY
 const PILLAR_DENSITY: float = Tuning.PILLAR_DENSITY
 const WALL_H: float = 3.0
+const WALL_HALF_THICKNESS: float = 0.175
+const WALL_MOUNT_GAP: float = 0.002
 const START_CLEAR: int = 1          # Chebyshev radius kept open around origin
 const PANEL_ENERGY: float = Tuning.PANEL_ENERGY
 const LIGHT_ENERGY: float = Tuning.LIGHT_ENERGY
@@ -36,6 +38,7 @@ var _cells: Dictionary = {}          # Vector2i -> Dictionary
 var _salt: Dictionary = {}           # Vector2i -> int
 var _cur_cell: Vector2i = Vector2i(999, 999)
 var _flicker: float = 0.0            # 0 = steady, higher = more flicker/panic
+var _flicker_target: float = 0.0
 var _time: float = 0.0
 
 # Materials (built once)
@@ -53,6 +56,7 @@ var _exit_available: bool = false
 var _exit_placed: bool = false
 var _exit_area: Area3D = null
 var _exit_cell: Vector2i = Vector2i.ZERO
+var _exit_door_base := Vector3.ZERO
 
 # Prop scenes (anomalies / exit dressing)
 var _chair_scene: PackedScene = null
@@ -62,7 +66,10 @@ var _office_door_scene: PackedScene = null
 var _fixture_scene: PackedScene = null
 
 var _anomaly_cells: Dictionary = {}   # Vector2i -> true
+var _powered_zones: Array[Dictionary] = []
 var _static_layout: bool = true       # layout is a pure function of cell coords
+var _run_seed: int = 1
+var _phone_cells: Dictionary = {}
 
 func setup(player: Node3D) -> void:
 	_player = player
@@ -72,23 +79,70 @@ func setup(player: Node3D) -> void:
 func set_static_layout(v: bool) -> void:
 	_static_layout = v
 
+func set_run_seed(value: int) -> void:
+	_run_seed = maxi(1, value)
+	_prepare_phone_cells()
+
 func _ready() -> void:
 	_build_materials()
 	_load_props()
+	if _phone_cells.is_empty():
+		_prepare_phone_cells()
+
+## Guaranteed phones, spread across the map and shared by seed. Walls remain
+## static, so randomized content cannot desynchronize collision in co-op.
+func _prepare_phone_cells() -> void:
+	_phone_cells.clear()
+	var rng := RandomNumberGenerator.new()
+	rng.seed = _run_seed ^ 0x50484F4E
+	var sectors: Array[Rect2i] = [
+		Rect2i(-15, -15, 15, 15), Rect2i(1, -15, 15, 15),
+		Rect2i(-15, 1, 15, 15), Rect2i(1, 1, 15, 15),
+		Rect2i(-10, -10, 21, 21), Rect2i(-15, -15, 31, 31),
+	]
+	for sector in sectors:
+		var chosen := Vector2i(999, 999)
+		for _attempt in 240:
+			var candidate := Vector2i(
+				rng.randi_range(sector.position.x, sector.end.x - 1),
+				rng.randi_range(sector.position.y, sector.end.y - 1))
+			if _cheb(candidate) < 3 or candidate.distance_squared_to(EXIT_CELL) < 9:
+				continue
+			if not is_cell_open(candidate) or corridor_path(candidate, Vector2i.ZERO, 1400).is_empty():
+				continue
+			var spread_ok := true
+			for existing in _phone_cells.keys():
+				if Vector2(existing).distance_to(Vector2(candidate)) < 5.0:
+					spread_ok = false
+					break
+			if not spread_ok:
+				continue
+			chosen = candidate
+			break
+		if chosen.x != 999:
+			_phone_cells[chosen] = true
+		if _phone_cells.size() >= Tuning.PHONE_COUNT:
+			break
+
+func get_phone_cells() -> Array:
+	return _phone_cells.keys()
 
 func _build_materials() -> void:
-	# Dark sepia-brown grade — dirty tan walls sinking to black, hot warm panels.
-	_wall_mat = _mk_mat("res://assets/textures/walls/backrooms_yellow_wallpaper.png", Vector3(2, 1, 1.5), 0.92, Color(0.76, 0.68, 0.5))
-	_wall_dirty_mat = _mk_mat("res://assets/textures/walls/backrooms_yellow_wallpaper.png", Vector3(2, 1, 1.5), 0.88, Color(0.58, 0.53, 0.38))
-	_wall_dark_mat = _mk_mat("res://assets/textures/walls/backrooms_yellow_wallpaper.png", Vector3(2, 1, 1.5), 0.90, Color(0.68, 0.60, 0.44))
+	# Preserve the wallpaper's native fluorescent yellow instead of multiplying
+	# it into orange/sepia. Variants stay close enough to avoid colour seams.
+	_wall_mat = _mk_mat("res://assets/textures/walls/backrooms_yellow_wallpaper.png", Vector3(2, 1, 1.5), 0.92, Color(0.84, 0.84, 0.76))
+	_wall_dirty_mat = _mk_mat("res://assets/textures/walls/backrooms_yellow_wallpaper.png", Vector3(2, 1, 1.5), 0.90, Color(0.72, 0.72, 0.64))
+	_wall_dark_mat = _mk_mat("res://assets/textures/walls/backrooms_yellow_wallpaper.png", Vector3(2, 1, 1.5), 0.92, Color(0.78, 0.78, 0.69))
 
-	_floor_mat = _mk_mat("res://assets/textures/floors/backrooms_damp_carpet.png", Vector3(2, 2, 1), 0.98, Color(0.58, 0.54, 0.44))
-	_linoleum_mat = _mk_mat("res://assets/textures/floors/backrooms_linoleum.png", Vector3(2, 2, 1), 0.75, Color(0.72, 0.68, 0.58))
-	_ceil_mat = _mk_mat("res://assets/textures/surfaces/backrooms_ceiling_tiles.png", Vector3(2, 2, 1), 0.95, Color(0.62, 0.6, 0.52))
+	# Cleaner commercial carpet: aged and faintly damp without baked-in mud
+	# blotches. The neutral tint keeps its khaki-yellow fibres intact.
+	_floor_mat = _mk_mat("res://assets/textures/floors/backrooms_carpet_clean.png", Vector3(2, 2, 1), 0.98, Color(0.82, 0.82, 0.72))
+	_linoleum_mat = _mk_mat("res://assets/textures/floors/backrooms_linoleum.png", Vector3(2, 2, 1), 0.78, Color(0.82, 0.81, 0.68))
+	_ceil_mat = _mk_mat("res://assets/textures/surfaces/backrooms_ceiling_tiles.png", Vector3(2, 2, 1), 0.95, Color(0.68, 0.68, 0.61))
 	_panel_mat = StandardMaterial3D.new()
-	_panel_mat.albedo_color = Color(0.9, 0.82, 0.62)
+	_panel_mat.albedo_color = Color(0.92, 0.91, 0.78)
 	_panel_mat.emission_enabled = true
-	_panel_mat.emission = Color(1.0, 0.88, 0.6)
+	_panel_mat.emission = Color(1.0, 0.97, 0.80)
 	_panel_mat.emission_energy_multiplier = PANEL_ENERGY
 	_panel_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	_exit_mat = StandardMaterial3D.new()
@@ -211,15 +265,10 @@ func _build_cell(c: Vector2i) -> void:
 	body.collision_mask = 0
 	root.add_child(body)
 
-	# Dynamic floor and wall variety based on cell hashes
+	# Keep adjacent modular wall pieces in the same colour family. Strong
+	# per-cell tints created visible seams that looked like mismatched assets.
 	var fl_mat := _floor_mat
-		
 	var wl_mat := _wall_mat
-	var hash_wall := _hash3(c.x, c.y, 992)
-	if hash_wall < 0.12: # 12% chance of dirty wall
-		wl_mat = _wall_dirty_mat
-	elif hash_wall < 0.24: # 12% chance of dark wall
-		wl_mat = _wall_dark_mat
 
 	# Floor
 	_add_box(root, body, Vector3(CELL, 0.1, CELL), Vector3(0, -0.05, 0), fl_mat, true)
@@ -281,10 +330,26 @@ func _build_cell(c: Vector2i) -> void:
 
 	# Anomalies — only in open "room" cells, rare, and not too close to start.
 	# (Open-plan cells almost all have 3+ open edges now, so keep the odds low.)
-	if open_edges >= 3 and _cheb(c) >= 3 and _hash3(c.x, c.y, 205) < Tuning.ANOMALY_CHANCE:
+	if _phone_cells.has(c):
+		_place_phone(root, c, data)
+	if not _phone_cells.has(c) and open_edges >= 3 and _cheb(c) >= 3 and _hash3(c.x, c.y, 205) < Tuning.ANOMALY_CHANCE:
 		_place_anomaly(root, c, data)
 
 	_cells[c] = data
+	_apply_power_override(c, data)
+
+func _apply_power_override(cell: Vector2i, data: Dictionary) -> void:
+	for zone in _powered_zones:
+		var center: Vector2i = zone["center"]
+		if maxi(abs(cell.x - center.x), abs(cell.y - center.y)) > int(zone["radius"]):
+			continue
+		var enabled := bool(zone["enabled"])
+		var pmat = data.get("panel_mat")
+		if pmat is StandardMaterial3D:
+			(pmat as StandardMaterial3D).emission_energy_multiplier = PANEL_ENERGY if enabled else 0.0
+		var light = data.get("light")
+		if light is OmniLight3D:
+			(light as OmniLight3D).light_energy = LIGHT_ENERGY if enabled else 0.0
 
 func _add_box(root: Node3D, body: StaticBody3D, size: Vector3, pos: Vector3, mat: StandardMaterial3D, collide: bool) -> void:
 	var mi := MeshInstance3D.new()
@@ -303,7 +368,7 @@ func _add_box(root: Node3D, body: StaticBody3D, size: Vector3, pos: Vector3, mat
 		body.add_child(cs)
 
 func _place_anomaly(root: Node3D, c: Vector2i, data: Dictionary) -> void:
-	var kind := int(_hash3(c.x, c.y, 333) * 3.0) % 3
+	var kind := int(_hash3(c.x, c.y, 333) * 2.0) % 2
 	var placed := false
 	if kind == 0 and _chair_scene:
 		var chair: Node3D = _chair_scene.instantiate()
@@ -312,13 +377,6 @@ func _place_anomaly(root: Node3D, c: Vector2i, data: Dictionary) -> void:
 		ModelUtils.ground_model(chair, 0.0)
 		chair.position += Vector3(1.1, 0, 1.1)
 		chair.rotation.y = deg_to_rad(180)  # facing the wall — wrong
-		placed = true
-	elif kind == 1 and _phone_scene:
-		var phone: Node3D = _phone_scene.instantiate()
-		phone.set_meta("phone_anomaly", true)
-		root.add_child(phone)
-		ModelUtils.scale_to_height(phone, 0.13)
-		phone.position = Vector3(-1.2, 0.02, -1.0)
 		placed = true
 	else:
 		# "a zone where light doesn't reach the floor" — kill the panel, keep it a room
@@ -329,6 +387,19 @@ func _place_anomaly(root: Node3D, c: Vector2i, data: Dictionary) -> void:
 	if placed:
 		data["anomaly"] = true
 		_anomaly_cells[c] = true
+
+func _place_phone(root: Node3D, c: Vector2i, data: Dictionary) -> void:
+	if _phone_scene == null:
+		return
+	var phone: Node3D = _phone_scene.instantiate()
+	phone.set_meta("phone_anomaly", true)
+	phone.set_meta("phone_cell", c)
+	root.add_child(phone)
+	ModelUtils.scale_to_height(phone, 0.13)
+	phone.position = Vector3(-1.2, 0.02, -1.0)
+	phone.rotation.y = _hash3(c.x, c.y, _run_seed & 0x7FFF) * TAU
+	data["anomaly"] = true
+	_anomaly_cells[c] = true
 
 func _free_cell(c: Vector2i) -> void:
 	if c == _exit_cell and _exit_placed:
@@ -355,7 +426,7 @@ func _update_lights(center: Vector2i) -> void:
 			# Short throw + hard falloff: each panel lights its own pool and the
 			# corridor between panels stays in genuine penumbra.
 			var lg := OmniLight3D.new()
-			lg.light_color = Color(1.0, 0.88, 0.62)
+			lg.light_color = Color(1.0, 0.96, 0.78)
 			lg.light_energy = LIGHT_ENERGY
 			lg.omni_range = Tuning.LIGHT_RANGE
 			lg.omni_attenuation = Tuning.LIGHT_ATTENUATION
@@ -369,6 +440,8 @@ func _update_lights(center: Vector2i) -> void:
 			d["light"] = null
 
 func _animate_lights(delta: float) -> void:
+	var flicker_speed := 2.2 if _flicker_target > _flicker else 0.9
+	_flicker = move_toward(_flicker, _flicker_target, delta * flicker_speed)
 	# Retrieve the active entity figure node if it exists
 	var fig: Node3D = get_node_or_null("../Figure")
 
@@ -389,17 +462,20 @@ func _animate_lights(delta: float) -> void:
 
 		var seed_v: float = d["flick_seed"]
 		var f := 1.0
-		# rare but deep idle flicker, each light on its own phase (never all at once)
-		var idle := 0.5 + 0.5 * sin(_time * (3.0 + seed_v * 6.0) + seed_v * 30.0)
-		if idle > 0.965:
-			f = 0.2
+		# Rare idle ballast dip: slow, shallow and unique to each fixture.
+		var idle := 0.5 + 0.5 * sin(_time * (0.35 + seed_v * 0.3) + seed_v * 41.0)
+		var idle_flutter := 0.5 + 0.5 * sin(_time * (4.0 + seed_v * 2.0) + seed_v * 17.0)
+		if idle > 0.992 and idle_flutter > 0.88:
+			f = 0.68
 		
 		var active_flicker := maxf(_flicker, prox_flicker)
 		if active_flicker > 0.01:
-			var strobe := sin(_time * (24.0 + seed_v * 20.0) + seed_v * 12.0)
-			# Stronger flicker rate the closer the entity is
-			if strobe > (1.0 - active_flicker * 1.35):
-				f = randf_range(0.01, 0.15)
+			# Uneven low-frequency pulses instead of a repetitive high-Hz strobe.
+			var envelope := 0.5 + 0.5 * sin(_time * (0.7 + seed_v * 0.55) + seed_v * 23.0)
+			var flutter := 0.5 + 0.5 * sin(_time * (4.2 + seed_v * 3.1) + seed_v * 11.0)
+			var pulse := smoothstep(0.72, 0.98, flutter) * lerpf(0.45, 1.0, envelope)
+			var floor_energy := lerpf(0.72, 0.34 + seed_v * 0.18, active_flicker)
+			f = minf(f, lerpf(1.0, floor_energy, pulse * active_flicker))
 
 		(pmat as StandardMaterial3D).emission_energy_multiplier = float(d["base_energy"]) * f
 		var lg = d["light"]
@@ -407,7 +483,20 @@ func _animate_lights(delta: float) -> void:
 			(lg as OmniLight3D).light_energy = LIGHT_ENERGY * f
 
 func set_flicker(v: float) -> void:
-	_flicker = clampf(v, 0.0, 1.0)
+	_flicker_target = clampf(v, 0.0, 1.0)
+
+func set_zone_power(center: Vector2i, radius: int, enabled: bool) -> void:
+	_powered_zones.append({"center": center, "radius": radius, "enabled": enabled})
+	for c in _cells.keys():
+		if maxi(abs(c.x - center.x), abs(c.y - center.y)) > radius:
+			continue
+		var data: Dictionary = _cells[c]
+		var pmat = data.get("panel_mat")
+		if pmat is StandardMaterial3D:
+			(pmat as StandardMaterial3D).emission_energy_multiplier = PANEL_ENERGY if enabled else 0.0
+		var light = data.get("light")
+		if light is OmniLight3D:
+			(light as OmniLight3D).light_energy = LIGHT_ENERGY if enabled else 0.0
 
 # ---------------------------------------------------------------------------
 # Anomalies / secret ending helpers
@@ -430,6 +519,36 @@ func is_cell_open(c: Vector2i) -> bool:
 	if _wall_present(c + Vector2i(-1, 0), DIR_E): walls += 1
 	if _wall_present(c + Vector2i(0, -1), DIR_N): walls += 1
 	return walls < 4
+
+## Finds a real wall face near a requested cell and returns a transform whose
+## local +Z points into the walkable space. World props use this instead of
+## guessing that a wall exists at a hard-coded offset.
+func wall_mount_near(preferred: Vector2i, height: float = 1.3) -> Dictionary:
+	for radius in range(0, 4):
+		for dx in range(-radius, radius + 1):
+			for dz in range(-radius, radius + 1):
+				if radius > 0 and abs(dx) != radius and abs(dz) != radius:
+					continue
+				var c := preferred + Vector2i(dx, dz)
+				if not is_cell_open(c):
+					continue
+				var center := world_center(c)
+				var mounts: Array[Dictionary] = []
+				# Place the mount 2 mm off the visible face: close enough to read as
+				# attached, but not coplanar (which would cause z-fighting).
+				var inset := WALL_HALF_THICKNESS + WALL_MOUNT_GAP
+				if _wall_present(c, DIR_E):
+					mounts.append({"position": center + Vector3(CELL * 0.5 - inset, height, 0.0), "rotation_y": -PI * 0.5, "cell": c})
+				if _wall_present(c, DIR_N):
+					mounts.append({"position": center + Vector3(0.0, height, CELL * 0.5 - inset), "rotation_y": PI, "cell": c})
+				if _wall_present(c + Vector2i(-1, 0), DIR_E):
+					mounts.append({"position": center + Vector3(-CELL * 0.5 + inset, height, 0.0), "rotation_y": PI * 0.5, "cell": c})
+				if _wall_present(c + Vector2i(0, -1), DIR_N):
+					mounts.append({"position": center + Vector3(0.0, height, -CELL * 0.5 + inset), "rotation_y": 0.0, "cell": c})
+				if not mounts.is_empty():
+					var pick := mini(int(_hash3(c.x, c.y, 606) * mounts.size()), mounts.size() - 1)
+					return mounts[pick]
+	return {}
 
 ## Wall-end corners near `center` where a figure can lurk behind cover and
 ## lean out. Each entry: {"out": exposed spot just past the wall end,
@@ -524,6 +643,20 @@ func _maybe_place_exit(_pc: Vector2i) -> void:
 func exit_world_pos() -> Vector3:
 	return world_center(EXIT_CELL)
 
+## Development shortcut used by GameWorld's F10 ending test. It creates the
+## real final doorway in the starting cell, using the same model, threshold
+## trigger and cinematic data as the normal deep-map exit.
+func debug_prepare_exit() -> Vector3:
+	const DEBUG_EXIT_CELL := Vector2i.ZERO
+	_exit_available = true
+	if not _exit_placed:
+		_exit_cell = DEBUG_EXIT_CELL
+		if not _cells.has(DEBUG_EXIT_CELL):
+			_build_cell(DEBUG_EXIT_CELL)
+		_spawn_exit_room(DEBUG_EXIT_CELL)
+		_exit_placed = true
+	return to_global(world_center(DEBUG_EXIT_CELL) + Vector3(0.0, 0.05, 0.45))
+
 func _spawn_exit_room(c: Vector2i) -> void:
 	var d = _cells.get(c)
 	if d == null:
@@ -545,9 +678,10 @@ func _spawn_exit_room(c: Vector2i) -> void:
 	root.add_child(lg)
 	d["light"] = lg
 	d["exit"] = true
+	_carve_exit_opening(root)
+	_add_exit_void(root)
 
 	# The one real door.
-	var door_pos := Vector3(0, 0, 0)
 	if _exit_door_scene:
 		var door: Node3D = _exit_door_scene.instantiate()
 		root.add_child(door)
@@ -570,16 +704,81 @@ func _spawn_exit_room(c: Vector2i) -> void:
 	area.collision_mask = 2  # detect player
 	var acs := CollisionShape3D.new()
 	var abox := BoxShape3D.new()
-	abox.size = Vector3(2.0, 2.4, 1.2)
+	abox.size = Vector3(1.45, 2.4, 0.4)
 	acs.shape = abox
-	acs.position = Vector3(0, 1.2, -1.5)
+	# The capsule reaches this only after its camera has crossed the door plane.
+	acs.position = Vector3(0, 1.2, -2.35)
 	area.add_child(acs)
 	root.add_child(area)
 	area.body_entered.connect(_on_exit_body_entered)
 	_exit_area = area
 
-	var wp: Vector3 = root.global_position + Vector3(0, 0, -1.6)
-	exit_spawned.emit(wp)
+	_exit_door_base = root.global_position + Vector3(0, 0, -1.6)
+	exit_spawned.emit(_exit_door_base)
+
+## Replace the solid boundary cap with a real doorway. The boundary cap has no
+## collision, but leaving its full wall mesh behind made the camera pass through
+## wallpaper before the ending trigger fired.
+func _carve_exit_opening(root: Node3D) -> void:
+	var wall_material: Material = _wall_mat
+	for child in root.get_children():
+		var wall := child as MeshInstance3D
+		if not wall or not wall.mesh is BoxMesh:
+			continue
+		var wall_size := (wall.mesh as BoxMesh).size
+		if absf(wall.position.z + CELL * 0.5) < 0.01 \
+				and is_equal_approx(wall_size.x, CELL) \
+				and is_equal_approx(wall_size.y, WALL_H):
+			if wall.material_override:
+				wall_material = wall.material_override
+			wall.visible = false
+			wall.queue_free()
+			break
+
+	const OPENING_WIDTH := 1.55
+	const OPENING_HEIGHT := 2.35
+	var side_width := (CELL - OPENING_WIDTH) * 0.5
+	var side_offset := OPENING_WIDTH * 0.5 + side_width * 0.5
+	_add_exit_wall_piece(root, Vector3(side_width, WALL_H, 0.35), Vector3(-side_offset, WALL_H * 0.5, -CELL * 0.5), wall_material)
+	_add_exit_wall_piece(root, Vector3(side_width, WALL_H, 0.35), Vector3(side_offset, WALL_H * 0.5, -CELL * 0.5), wall_material)
+	var header_height := WALL_H - OPENING_HEIGHT
+	_add_exit_wall_piece(root, Vector3(OPENING_WIDTH, header_height, 0.35), Vector3(0.0, OPENING_HEIGHT + header_height * 0.5, -CELL * 0.5), wall_material)
+
+func _add_exit_wall_piece(root: Node3D, size: Vector3, position: Vector3, material: Material) -> void:
+	var piece := MeshInstance3D.new()
+	var mesh := BoxMesh.new()
+	mesh.size = size
+	piece.mesh = mesh
+	piece.material_override = material
+	piece.position = position
+	root.add_child(piece)
+
+## A double-sided, unlit black volume immediately beyond the threshold hides
+## the streamed maze while the ending camera travels through the doorway.
+func _add_exit_void(root: Node3D) -> void:
+	var void_mesh := MeshInstance3D.new()
+	void_mesh.name = "ExitVoid"
+	var box := BoxMesh.new()
+	box.size = Vector3(1.45, 2.3, 1.8)
+	void_mesh.mesh = box
+	void_mesh.position = Vector3(0.0, 1.15, -2.85)
+	var black := StandardMaterial3D.new()
+	black.albedo_color = Color.BLACK
+	black.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	black.cull_mode = BaseMaterial3D.CULL_DISABLED
+	void_mesh.material_override = black
+	root.add_child(void_mesh)
+
+## Camera endpoint for the seamless game-to-video threshold transition.
+func exit_transition_view() -> Dictionary:
+	if not _exit_placed:
+		return {}
+	var forward := (global_basis * Vector3(0.0, 0.0, -1.0)).normalized()
+	var up := global_basis.y.normalized()
+	return {
+		"camera": _exit_door_base + up * 1.55 + forward * 0.78,
+		"look_at": _exit_door_base + up * 1.48 + forward * 2.8,
+	}
 
 func _on_exit_body_entered(body: Node) -> void:
 	if body == _player or (body.get_parent() == _player):

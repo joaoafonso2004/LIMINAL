@@ -111,6 +111,7 @@ var _shadow_max_reveals := 3
 var _mp := false
 var _mp_host := false
 var _world = null                      # game_world (net relay + alive players)
+var _local_targetable := true          # false while this client is down/dead
 var _net_fig_active := false           # another client's apparition is live
 var _net_fig_watchdog := 0.0           # frees the slot if their scare fizzles
 var _owns_fig := false
@@ -131,6 +132,11 @@ var _path_timer := 0.0
 var _path_fail := 0.0                  # seconds spent with no route to the player
 var _chase_steps: AudioStreamPlayer3D = null
 var _chase_scream: AudioStreamPlayer3D = null
+var _entity_step_prev_pos := Vector3.ZERO
+var _entity_step_figure_id := 0
+var _entity_step_stop_delay := 0.0
+var _mirror_step_prev_pos := Vector3.ZERO
+var _mirror_step_stop_delay := 0.0
 
 # scheduling
 var _next_peek := 0.0
@@ -144,7 +150,10 @@ var _next_sound := 0.0
 var _dread := 0.0
 var _final_phase := false
 var _ended := false
+var _catch_in_progress := false
+var _rule_speed_mult := 1.0
 var _logged_mode := "idle"             # last mode reported to the debug log
+var _event_hold_until := 0.0
 
 # sfx streams
 var _sfx: Dictionary = {}
@@ -160,12 +169,85 @@ func setup_mp(world, host: bool) -> void:
 	_mp = true
 	_mp_host = host
 
+## Co-op life-cycle gate. A downed/dead player must never keep a locally-owned
+## entity, receive a scare, or be caught again. The host can still direct the
+## shared entity towards another living client while spectating.
+func set_local_player_targetable(value: bool) -> void:
+	if _local_targetable == value:
+		return
+	_local_targetable = value
+	if value:
+		_catch_in_progress = false
+		return
+
+	_stop_chase_loops()
+	_remove_figure()
+	_mode = "idle"
+	_chase_state = "pursue"
+	_chase_path = []
+	_roam_path = []
+	_stalk_active = false
+	_linger_timer = 0.0
+	_prox_muffle = false
+	_catch_in_progress = false
+	request_flicker.emit(0.0)
+	request_dread.emit(0.0)
+	muffle.emit(false)
+	var overlay := _get_overlay()
+	if is_instance_valid(overlay) and overlay.has_method("set_chase_vignette"):
+		overlay.set_chase_vignette(false)
+	if is_instance_valid(_camera):
+		_camera.fov = 72.0
+	if has_node("/root/AudioManager"):
+		AudioManager.set_heartbeat_state("silent")
+
+func set_rule_modifiers(speed_multiplier: float) -> void:
+	_rule_speed_mult = clampf(speed_multiplier, 0.75, 1.5)
+
 func _now() -> float:
 	return GameManager.run_time if has_node("/root/GameManager") else 0.0
 
 ## Difficulty rises with the tins: 0.0 = untouched run, 1.0 = all collected.
 func set_menace(v: float) -> void:
 	_menace = clampf(v, 0.0, 1.0)
+
+func calm_down(amount: float) -> void:
+	_stress = maxf(0.0, _stress - maxf(amount, 0.0))
+
+## Milestones need a short readable beat. This pauses only NEW scheduled
+## scares; an active chase is never cancelled by picking up an objective.
+func hold_new_events(seconds: float) -> void:
+	_event_hold_until = maxf(_event_hold_until, _now() + maxf(seconds, 0.0))
+
+func allows_mimic() -> bool:
+	return not _ended and (_mode == "idle" or _mode == "roam") and not _final_phase
+
+## Loud actions do not spawn a chase from nothing, but an active physical
+## entity can investigate them and reacquire a careless runner.
+func investigate_noise(world_position: Vector3, audible_range: float, kind: String = "") -> void:
+	if _ended or not _local_targetable:
+		return
+	if kind == "sprint":
+		_add_stress(0.012)
+		_sound_pressure = minf(1.0, _sound_pressure + 0.025)
+	elif kind == "callout":
+		_add_stress(0.02)
+		_sound_pressure = minf(1.0, _sound_pressure + 0.06)
+	if not is_instance_valid(_figure):
+		return
+	if _figure.global_position.distance_to(world_position) > audible_range:
+		return
+	match _mode:
+		"chase":
+			_last_seen_pos = world_position
+			if _chase_state == "search":
+				_chase_state = "pursue"
+				_search_timer = 0.0
+		"roam":
+			_roam_target = world_position
+			if _maze and _maze.has_method("corridor_path"):
+				_roam_path = _maze.corridor_path(_cell_of(_figure.global_position), _cell_of(world_position))
+			_roam_wait = 0.0
 
 func _ready() -> void:
 	_rng.randomize()
@@ -174,7 +256,8 @@ func _ready() -> void:
 	if ResourceLoader.exists(ANIM_LIB):
 		_anim_lib = load(ANIM_LIB)
 	_load_sfx()
-	_next_peek = Tuning.PEEK_FIRST_SIGHTING
+	# Stagger personal horror so co-op clients never receive it on one frame.
+	_next_peek = Tuning.PEEK_FIRST_SIGHTING + _rng.randf_range(-5.0, 9.0)
 	_next_jump = 999.0                                   # armed at JUMP_ARM_TIME
 	_next_chase = 999.0                                  # armed at CHASE_ARM_TIME
 	_next_sound = 25.0
@@ -199,6 +282,17 @@ func _load_sfx() -> void:
 # ---------------------------------------------------------------------------
 func _physics_process(delta: float) -> void:
 	if _ended or not is_instance_valid(_player) or not is_instance_valid(_camera):
+		return
+	# Dead clients only render the shared figure pursuing living teammates. The
+	# host additionally keeps the scheduler alive so it can pick another client,
+	# but skips every camera/player-local scare and perception update.
+	if _mp and not _local_targetable:
+		if _mp_host:
+			var host_time := _now()
+			_arm_schedules(host_time)
+			_tick_idle(host_time)
+		_tick_mirror_steps(delta)
+		_net_fig_tick(delta)
 		return
 	var t := 0.0
 	var looks := 0
@@ -226,7 +320,7 @@ func _physics_process(delta: float) -> void:
 	# A due jumpscare doesn't queue politely behind a watcher — it interrupts.
 	# (It fires while walking, standing, mid-peek, mid-tail: whenever it's due.)
 	if (_mode == "peek" or _mode == "shadow") and t >= _next_jump and _can_jump(t):
-		if not _mp or (_mp_host and not _net_fig_active):
+		if not _shared_chase_active():
 			_end_apparition()
 			_begin_jump(t)
 
@@ -247,6 +341,9 @@ func _physics_process(delta: float) -> void:
 				_roam_cooldown = maxf(0.0, _roam_cooldown - delta)
 				if _roam_cooldown <= 0.0:
 					_begin_roam()
+
+	_tick_entity_steps(delta)
+	_tick_mirror_steps(delta)
 
 	if _mp:
 		_net_fig_tick(delta)
@@ -416,70 +513,68 @@ func _play_random_distant_sound(t: float) -> void:
 # IDLE — decide when to summon
 # ---------------------------------------------------------------------------
 func _tick_idle(t: float) -> void:
-	if _final_phase and not _stalk_active:
+	if t < _event_hold_until:
+		return
+	if _final_phase and not _stalk_active and _local_targetable:
 		_begin_stalk()
 		return
-	# Co-op: only the host schedules, and never while a teammate's scare runs.
-	if _mp and (not _mp_host or _net_fig_active):
+	# A physical shared figure has priority over personal hallucinations.
+	if _shared_chase_active():
+		return
+	# During the short network window after the last living player falls there
+	# is nobody valid to receive an event. Never fall back to the dead host.
+	if _mp and not _local_targetable and _world != null \
+			and _world.has_method("alive_player_ids") and _world.alive_player_ids().is_empty():
 		return
 	# menace raises the chase cap too (2 → 5 with every tin in hand)
-	if t >= _next_chase and _chase_done < Tuning.CHASE_MAX_PER_RUN + int(round(_menace * 3.0)):
-		if _dispatch("chase"):
+	if (not _mp or _mp_host) and t >= _next_chase \
+			and _chase_done < Tuning.CHASE_MAX_PER_RUN + int(round(_menace * 3.0)):
+		if _mp and _dispatch_chase():
 			_chase_done += 1
 			_next_chase = t + _rng.randf_range(60.0, 140.0) * lerpf(1.0, 0.55, _menace)
-		else:
+		elif _local_targetable:
 			_begin_chase()
 		return
+	if not _local_targetable:
+		return
 	if t >= _next_jump and _can_jump(t):
-		if _dispatch("jump"):
-			_last_jump_time = t
-			_jump_count += 1
-			_next_jump = t + _rng.randf_range(150.0, 260.0)
-		else:
-			_begin_jump(t)
+		_begin_jump(t)
 		return
 	if t >= _next_shadow:
-		if _dispatch("shadow"):
-			_next_shadow = t + _rng.randf_range(Tuning.SHADOW_GAP_MIN, Tuning.SHADOW_GAP_MAX)
-		else:
-			_begin_shadow()
+		_begin_shadow()
 		return
 	if t >= _next_peek:
-		if _dispatch("peek"):
-			_next_peek = t + _rng.randf_range(Tuning.PEEK_GAP_EARLY * 0.5, Tuning.PEEK_GAP_EARLY)
-		else:
-			_begin_peek()
+		_begin_peek()
 		return
 
 ## Co-op direction: pick a living player; if it isn't us, hand the scare to
 ## their client (their camera does the validation) and mirror what follows.
 ## Returns true when delegated — the local director stays idle.
-func _dispatch(kind: String) -> bool:
+func _dispatch_chase() -> bool:
 	if not _mp or not _mp_host or _world == null or not _world.has_method("alive_player_ids"):
 		return false
 	if not has_node("/root/NetManager"):
 		return false
 	
-	if kind == "jump":
-		_world.net_send("scare_all", {"kind": "jump"})
-		_begin_jump(_now())
-		return true
-		
 	var ids: Array = _world.alive_player_ids()
 	if ids.is_empty():
 		return false
 	var target: int = int(ids[_rng.randi() % ids.size()])
 	if target == NetManager.local_player_id:
 		return false
-	_world.net_send("scare", {"kind": kind, "target": target})
+	_world.net_send("scare", {"kind": "chase", "target": target})
 	_net_fig_active = true   # held until their figoff arrives
+	_mirror_mode = "chase"
 	_net_fig_watchdog = 20.0
 	return true
+
+func _shared_chase_active() -> bool:
+	return _mp and _net_fig_active and _mirror_mode == "chase"
 
 ## A trapped phone answered — the entity takes the call. Player-initiated,
 ## A trapped phone answered — the entity roars and charges straight towards the telephone!
 func phone_chase(phone_pos: Vector3) -> void:
-	if _ended:
+	if _ended or not _local_targetable:
 		return
 	if _mode == "peek" or _mode == "shadow":
 		_end_apparition()
@@ -495,18 +590,23 @@ func phone_chase(phone_pos: Vector3) -> void:
 	var ov_start := _get_overlay()
 	if is_instance_valid(ov_start) and ov_start.has_method("set_chase_vignette"):
 		ov_start.set_chase_vignette(true)
-	request_flicker.emit(0.85)
+	request_flicker.emit(0.5)
 	if has_node("/root/AudioManager") and _sfx.has("chase_scream"):
-		AudioManager.play_sfx_3d(self, _sfx["chase_scream"], _windup_spot + Vector3(0, 1.5, 0), 4.0, 50.0, 0.9)
+		AudioManager.play_sfx_3d(self, _sfx["chase_scream"], _windup_spot + Vector3(0, 1.5, 0), -3.0, 50.0, 0.9)
 
 func phone_jumpscare() -> void:
-	if _ended or _mode != "idle":
+	if _ended or not _local_targetable or _mode != "idle":
 		return
 	_begin_jump(_now())
 
 ## A scare order from the host, realized with OUR camera and OUR maze rays.
 func remote_scare(kind: String) -> void:
-	if _ended or _mode != "idle":
+	if _ended or not _local_targetable:
+		return
+	# A host-directed physical chase can replace a personal corner apparition.
+	if kind == "chase" and (_mode == "peek" or _mode == "shadow"):
+		_end_apparition()
+	if _mode != "idle":
 		return
 	match kind:
 		"chase":
@@ -551,37 +651,13 @@ func _begin_peek() -> void:
 		_stare_timer = -1.0
 		# most watchers hold your gaze a beat before slipping away;
 		# some are gone the instant your eyes land on them
-		_peek_style = "trap" if _rng.randf() < 0.10 else "stealth"
-		_peek_timer = _rng.randf_range(6.0, 11.0)
+		_peek_style = "stealth"
+		_peek_timer = _rng.randf_range(5.0, 8.0)
 		_wire_peek_skeleton()
 		return
-	# Fallback: open spot near a wall (no free corner in range right now).
-	var spot := _find_peek_spot()
-	if spot.is_empty():
-		var t := 0.0
-		if has_node("/root/GameManager"):
-			t = GameManager.run_time
-		_next_peek = t + 2.0  # retry very soon (2.0s) instead of waiting full gap!
-		return
-	_spawn_figure(spot["hide"], false)
-	if _figure:
-		_face_player(_figure)
-		_play_anim("ual1_Idle")
-		_set_figure_alpha(0.0)  # Start invisible
-	_peek_corner = true
-	_peek_from = spot["hide"]
-	_peek_to = spot["out"]
-	_lean = 0.0
-	_lean_dir = 1.0
-	_mode = "peek"
-	_peek_recede = false
-	_peek_witnessed = false
-	_peek_loop_count = 0
-	_peek_wait_timer = 0.0
-	_stare_timer = -1.0
-	_peek_style = "trap" if _rng.randf() < 0.10 else "stealth"
-	_peek_timer = _rng.randf_range(6.0, 11.0)
-	_wire_peek_skeleton()
+	# No arbitrary-wall fallback: if there is no genuine free wall end, wait
+	# and try again instead of risking a figure intersecting a solid wall.
+	_next_peek = _now() + 2.0
 
 ## Pick a wall-end corner where cover geometry really works from the player's
 ## point of view: leaning out is visible, hiding is not.
@@ -594,6 +670,13 @@ func _find_peek_corner() -> Dictionary:
 	for cand in cands:
 		var out_head: Vector3 = cand["out"] + Vector3(0, 1.6, 0)
 		var hide_head: Vector3 = cand["hide"] + Vector3(0, 1.6, 0)
+		var geometry_clear := true
+		for sample in [0.0, 0.33, 0.66, 1.0]:
+			if not _figure_pose_clear(cand["hide"].lerp(cand["out"], sample)):
+				geometry_clear = false
+				break
+		if not geometry_clear:
+			continue
 		if not _ray_clear(eye, out_head):
 			continue  # leaning out must actually reveal it
 		if _ray_clear(eye, hide_head):
@@ -605,7 +688,14 @@ func _dread_scaled_peek_gap() -> float:
 	var t := 0.0
 	if has_node("/root/GameManager"):
 		t = GameManager.run_time
-	return t + 1.0
+	var run_phase := clampf(t / Tuning.FINAL_PHASE_TIME, 0.0, 1.0)
+	var base_gap := lerpf(Tuning.PEEK_GAP_EARLY, Tuning.PEEK_GAP_LATE, run_phase)
+	# SNUS makes the entity more dangerous through chases and jumps, not by
+	# turning the corner watcher into repetitive visual spam.
+	var menace_scale := lerpf(1.0, 0.95, _menace)
+	var recovery_scale := 1.0 + _stress * 0.35
+	var gap := base_gap * menace_scale * recovery_scale * _rng.randf_range(0.85, 1.25)
+	return t + maxf(22.0, gap)
 
 func _tick_peek(delta: float) -> void:
 	if not is_instance_valid(_figure):
@@ -615,32 +705,14 @@ func _tick_peek(delta: float) -> void:
 
 	var flat := _figure.global_position - _player.global_position
 	flat.y = 0.0
+	if flat.length() <= Tuning.PEEK_VANISH_DIST:
+		_end_apparition()
+		return
 	
 	var looked := _player_looking_at(_figure, 0.40) or _in_view(_figure)
 	var visible_now := _in_view(_figure) and _has_los(_figure)
 	if visible_now:
 		_peek_witnessed = true
-
-	# TRAP ENCOUNTER: If this is a trap peek and player gets closer than 7.5m, CHARGE!
-	if _peek_style == "trap" and flat.length() < 7.5:
-		var trap_pos := _figure.global_position
-		_end_apparition()
-		_spawn_figure(trap_pos, false)
-		if _figure:
-			_set_figure_alpha(1.0)
-			_face_player(_figure)
-			_play_anim("ual1_Sprint")
-			_mode = "chase"
-			_chase_state = "pursue"
-			_last_seen_pos = _player.global_position
-			_has_seen_player_this_chase = true
-			_chase_speed_mult = 1.05
-			request_flicker.emit(1.0)
-			if has_node("/root/AudioManager") and _sfx.has("chase_scream"):
-				AudioManager.play_sfx(_sfx["chase_scream"], -1.0)
-			_chase_steps = _attach_loop(_figure, _sfx.get("heavy_steps"), -4.0)
-			_chase_scream = _attach_loop(_figure, _sfx.get("chase_scream"), -18.0)
-		return
 
 	# Near but unseen → muffle
 	var prox := flat.length() < Tuning.PEEK_MUFFLE_DIST and not visible_now
@@ -651,14 +723,14 @@ func _tick_peek(delta: float) -> void:
 	# Monster this close makes the electrics sick: violent-ish panel flicker
 	# + buzzing whenever it lurks within 12 m (peeking or hidden).
 	if flat.length() < 12.0:
-		request_flicker.emit(0.35)
+		request_flicker.emit(0.14)
 		_proximity_buzz(delta)
 	else:
 		request_flicker.emit(0.0)
 
 	# 100% SILENT PEEKING — No audio on gaze!
 	# Normal stealth peeks recede when looked at. Trap peeks stay staring!
-	if (visible_now or looked) and not _peek_recede and _peek_style != "trap":
+	if (visible_now or looked) and not _peek_recede:
 		if _stare_timer < 0.0:
 			_stare_timer = 0.12  # quick eye-contact reaction duration
 			_add_stress(0.10)
@@ -712,6 +784,8 @@ func _tick_peek(delta: float) -> void:
 
 	if _peek_timer <= 0.0 and not _peek_corner:
 		_end_apparition()
+	elif _peek_timer <= -1.0:
+		_end_apparition()
 	# (bone poses are applied via skeleton_updated — post-animation — not here)
 
 ## A breath you can localize: it comes from where the thing stands.
@@ -748,48 +822,6 @@ func _proximity_buzz(delta: float) -> void:
 	_buzz_cd = _rng.randf_range(3.5, 6.5)
 	if is_instance_valid(_figure):
 		AudioManager.play_sfx_3d(self, _sfx["flicker"], _figure.global_position + Vector3(0, 2.6, 0), -8.0, 20.0, _rng.randf_range(0.95, 1.1))
-
-func _find_peek_spot() -> Dictionary:
-	# A valid peek spot must be (a) currently OFF-screen, so it "appears" when
-	# the player turns, and (b) on a clear sightline from the player's eye —
-	# otherwise it spawns behind maze walls and is never seen at all.
-	var eye: Vector3 = _camera.global_position
-	# Try up to 150 times to find a perfect peeking corner/wall spot
-	for _i in range(150):
-		var ang := _rng.randf() * TAU
-		var dist := _rng.randf_range(Tuning.PEEK_DIST_MIN, Tuning.PEEK_DIST_MAX)
-		var p: Vector3 = _player.global_position + Vector3(cos(ang), 0, sin(ang)) * dist
-		p.y = 0.0
-		var head := p + Vector3(0, 1.6, 0)
-		if _in_view_point(head):
-			continue
-		
-		# Wall check: find a wall near the candidate position
-		var wall_dir := Vector3.ZERO
-		for dir in [Vector3.FORWARD, Vector3.BACK, Vector3.LEFT, Vector3.RIGHT]:
-			var hit := _ray_hit(head, head + dir * 1.5)
-			if not hit.is_empty():
-				wall_dir = dir
-				break
-				
-		if wall_dir == Vector3.ZERO:
-			continue
-			
-		# Construct hide and out positions along the wall direction
-		var hide_pos := p + wall_dir * 0.7
-		var out_pos := p - wall_dir * 0.4
-		
-		# Verify sightlines: leaning out must be visible, hiding must be covered
-		if not _ray_clear(eye, out_pos + Vector3(0, 1.6, 0)):
-			continue
-		if _ray_clear(eye, hide_pos + Vector3(0, 1.6, 0)):
-			continue
-			
-		return {
-			"hide": hide_pos,
-			"out": out_pos
-		}
-	return {}
 
 # ---------------------------------------------------------------------------
 # SHADOW — the silent tail. It follows from wall cover, standing EXPOSED at a
@@ -835,7 +867,7 @@ func _tick_shadow(delta: float) -> void:
 		return
 	# the fixtures feel it too — flicker + buzz while it tails within 12 m
 	if dist < 12.0:
-		request_flicker.emit(0.3)
+		request_flicker.emit(0.12)
 		_proximity_buzz(delta)
 	else:
 		request_flicker.emit(0.0)
@@ -906,6 +938,13 @@ func _find_shadow_corner(prefer_behind: bool) -> Dictionary:
 	for cand in cands:
 		var out_head: Vector3 = cand["out"] + Vector3(0, 1.6, 0)
 		var hide_head: Vector3 = cand["hide"] + Vector3(0, 1.6, 0)
+		var geometry_clear := true
+		for sample in [0.0, 0.33, 0.66, 1.0]:
+			if not _figure_pose_clear(cand["hide"].lerp(cand["out"], sample)):
+				geometry_clear = false
+				break
+		if not geometry_clear:
+			continue
 		if _in_view_point(out_head) and _ray_clear(eye, out_head):
 			continue  # inside the current view — appearing would be witnessed
 		if not _ray_clear(eye, out_head):
@@ -956,7 +995,7 @@ func _begin_jump(t: float) -> void:
 		_camera.fov = 62.0
 	_mode = "jump"
 	jumpscare.emit()
-	request_flicker.emit(1.0)
+	request_flicker.emit(0.75)
 	_add_stress(0.5)
 	if has_node("/root/AudioManager") and _sfx.has("jump"):
 		# never the exact same scream twice — pitch drift keeps it raw
@@ -1005,7 +1044,7 @@ func _begin_chase() -> void:
 	if not _prox_muffle:
 		_prox_muffle = true
 		muffle.emit(true)          # the hum sinks — something is coming
-	request_flicker.emit(0.55)
+	request_flicker.emit(0.28)
 	if has_node("/root/AudioManager") and _sfx.has("chase_scream"):
 		# the howl arrives from the spawn direction, far and getting ready
 		AudioManager.play_sfx_3d(self, _sfx["chase_scream"], spot + Vector3(0, 1.5, 0), -6.0, 45.0, 0.9)
@@ -1032,14 +1071,13 @@ func _launch_chase() -> void:
 	_chase_state = "pursue"
 	_last_seen_pos = _player.global_position
 	_has_seen_player_this_chase = false
-	_stumble_timer = _rng.randf_range(1.5, 2.5)
+	_stumble_timer = _rng.randf_range(3.8, 5.2)
 	_stumble_duration = 0.0
 	_chase_speed_mult = 1.0
-	request_flicker.emit(1.0)
+	request_flicker.emit(0.65)
 	if has_node("/root/AudioManager") and _sfx.has("chase_scream"):
 		AudioManager.play_sfx(_sfx["chase_scream"], -2.0)
 	# Looping positional layers ride on the figure: distance IS the mix.
-	_chase_steps = _attach_loop(_figure, _sfx.get("heavy_steps"), -4.0)
 	_chase_scream = _attach_loop(_figure, _sfx.get("chase_scream"), -18.0)
 
 func _find_chase_spawn() -> Vector3:
@@ -1048,9 +1086,9 @@ func _find_chase_spawn() -> Vector3:
 	# the player, so the entity charges INTO view: heard first, then seen.
 	var eye: Vector3 = _camera.global_position
 	var pcell: Vector2i = _cell_of(_player.global_position)
-	for _i in range(24):
+	for _i in range(48):
 		var ang := _rng.randf() * TAU
-		var dist := _rng.randf_range(9.0, 14.0)
+		var dist := _rng.randf_range(Tuning.CHASE_SPAWN_MIN, Tuning.CHASE_SPAWN_MAX)
 		var p: Vector3 = _player.global_position + Vector3(cos(ang), 0, sin(ang)) * dist
 		p.y = 0.0
 		var head := p + Vector3(0, 1.5, 0)
@@ -1058,7 +1096,7 @@ func _find_chase_spawn() -> Vector3:
 			continue  # the player would watch it pop into existence
 		if _maze and _maze.has_method("corridor_path"):
 			var route: Array = _maze.corridor_path(_cell_of(p), pcell)
-			if route.size() < 2 or route.size() > 10:
+			if route.size() < 2 or route.size() > 12:
 				continue  # unreachable pocket, or too far through the maze
 		return p
 	return Vector3.INF  # caller reschedules a new attempt shortly
@@ -1085,7 +1123,7 @@ func _tick_chase(delta: float) -> void:
 	# --- phase: windup (no figure yet, the world just turned hostile) ---
 	if _chase_state == "windup":
 		_windup_timer -= delta
-		request_flicker.emit(0.55)
+		request_flicker.emit(0.28)
 		if _windup_timer <= 0.0:
 			_launch_chase()
 		return
@@ -1118,24 +1156,17 @@ func _tick_chase(delta: float) -> void:
 	if _fig_sees:
 		_last_seen_pos = _player.global_position
 		_has_seen_player_this_chase = true
-	else:
-		# If the entity has already seen the player but loses line of sight (e.g. player crosses a corner),
-		# it instantly disappears!
-		if _has_seen_player_this_chase:
-			_end_chase(true)
-			return
 
 	# --- phase: search (it lost you; it stands where you were, listening) ---
 	if _chase_state == "search":
 		_search_timer -= delta
-		request_flicker.emit(0.4)
+		request_flicker.emit(0.18)
 		if _fig_sees and d < 14.0:
 			# found you again — the sting, the steps, the sprint
 			_chase_state = "pursue"
 			_play_anim("ual1_Sprint")
 			if has_node("/root/AudioManager") and _sfx.has("chase_scream"):
 				AudioManager.play_sfx(_sfx["chase_scream"], -3.0, 1.05)
-			_chase_steps = _attach_loop(_figure, _sfx.get("heavy_steps"), -4.0)
 			_chase_scream = _attach_loop(_figure, _sfx.get("chase_scream"), -18.0)
 			_add_stress(0.15)
 		elif _search_timer <= 0.0:
@@ -1146,7 +1177,7 @@ func _tick_chase(delta: float) -> void:
 	# Handle stumbling/lunging states
 	if _stumble_duration > 0.0:
 		_stumble_duration -= delta
-		_chase_speed_mult = 0.20  # slow down significantly as it stumbles
+		_chase_speed_mult = 0.55
 		
 		# Tilt torso forward and dip down
 		if _figure.get_child_count() > 0:
@@ -1155,7 +1186,7 @@ func _tick_chase(delta: float) -> void:
 			model_node.position.y = lerpf(model_node.position.y, -0.42, 12.0 * delta)
 		
 		if _stumble_duration <= 0.0:
-			_stumble_timer = _rng.randf_range(2.1, 3.3)
+			_stumble_timer = _rng.randf_range(4.2, 6.2)
 	else:
 		_stumble_timer -= delta
 		
@@ -1172,7 +1203,7 @@ func _tick_chase(delta: float) -> void:
 			_chase_speed_mult = 1.0
 			
 		if _stumble_timer <= 0.0:
-			_stumble_duration = 0.45
+			_stumble_duration = 0.28
 			# Horrifying random screech from the juanjo sound folder
 			if has_node("/root/AudioManager"):
 				var idx := _rng.randi_range(2, 9) # pick screaming files
@@ -1224,7 +1255,7 @@ func _tick_chase(delta: float) -> void:
 		if _los_lost >= max_los_lost:
 			_end_chase(true)
 			return
-	request_flicker.emit(1.0)
+	request_flicker.emit(0.48)
 
 func _stop_chase_loops() -> void:
 	if is_instance_valid(_chase_steps):
@@ -1271,7 +1302,7 @@ func _chase_move(delta: float, dist_to_player: float) -> void:
 	# Speed rises gently with every SNUS grabbed: 4.15m/s base up to 4.85m/s at 5 tins!
 	# Because the entity stumbles every ~2.5s, smart cornering ALWAYS allows escape.
 	var base_spd := CHASE_SPEED + (_menace * 0.70)
-	var speed := base_spd * _chase_speed_mult
+	var speed := base_spd * _chase_speed_mult * _rule_speed_mult
 	if dist_to_player > 8.0:
 		speed *= 1.08
 	elif dist_to_player < 3.0:
@@ -1322,10 +1353,11 @@ func _end_chase(vanished: bool) -> void:
 	_next_peek = maxf(_next_peek, t + 20.0)
 
 func _do_caught() -> void:
-	if _ended:
+	if _ended or not _local_targetable or _catch_in_progress:
 		return
 	if is_instance_valid(_player) and _player.has_meta("is_hiding") and _player.get_meta("is_hiding"):
 		return
+	_catch_in_progress = true
 
 	# In co-op, the entity catches one player then retreats — it doesn't end.
 	var is_coop := _mp and _world != null
@@ -1365,6 +1397,7 @@ func _do_caught() -> void:
 					_camera.fov = 72.0
 				if has_node("/root/AudioManager"):
 					AudioManager.set_heartbeat_state("silent")
+				_catch_in_progress = false
 				var t := _now()
 				_next_peek = t + _rng.randf_range(25.0, 40.0)
 				_next_chase = t + _rng.randf_range(45.0, 90.0)
@@ -1404,7 +1437,7 @@ func _tick_stalk(delta: float) -> void:
 		_face_player(_figure)
 		# Screen distortion and heavy dread!
 		request_dread.emit(0.8)
-		request_flicker.emit(0.4)
+		request_flicker.emit(0.18)
 		# Rare whispering while looking at it
 		if randf() < 0.008 and has_node("/root/AudioManager") and _sfx.has("breath"):
 			AudioManager.play_sfx_3d(self, _sfx["breath"], _figure.global_position, -2.0, 20.0, randf_range(0.85, 0.95))
@@ -1436,7 +1469,7 @@ func _tick_stalk(delta: float) -> void:
 func _stalk_kill() -> void:
 	# a step behind, lights out — same face-first cinematic as the chase catch
 	if has_node("/root/AudioManager") and _sfx.has("heavy_steps"):
-		AudioManager.play_sfx(_sfx["heavy_steps"], 0.0)
+		AudioManager.play_sfx_3d(self, _sfx["heavy_steps"], _figure.global_position, 0.0, 36.0, 0.82)
 	_do_caught()
 
 func enter_final_phase() -> void:
@@ -1473,7 +1506,6 @@ func _spawn_figure(pos: Vector3, _instant: bool) -> void:
 						":RightShoulder" in path_str or ":rightshoulder" in path_str)
 					var is_spine_track := (":Spine" in path_str or ":spine" in path_str or
 						":Neck" in path_str or ":neck" in path_str)
-					
 					if is_spine_track or (is_arm_track and _mode == "chase"):
 						anim.remove_track(track_idx)
 		ap.add_animation_library("", lib)
@@ -1484,7 +1516,7 @@ func _spawn_figure(pos: Vector3, _instant: bool) -> void:
 
 func _blacken(model: Node3D) -> void:
 	var mat := StandardMaterial3D.new()
-	mat.albedo_color = Color(0.02, 0.02, 0.025)
+	mat.albedo_color = Color(0.12, 0.12, 0.14)
 	mat.roughness = 1.0
 	mat.metallic = 0.0
 	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
@@ -1573,12 +1605,61 @@ func _attach_loop(parent: Node3D, stream, vol: float) -> AudioStreamPlayer3D:
 	p.bus = "SFX"
 	p.playback_type = AudioServer.PLAYBACK_TYPE_STREAM
 	p.volume_db = vol
-	p.max_distance = 34.0
-	p.unit_size = 7.0
+	p.attenuation_model = AudioStreamPlayer3D.ATTENUATION_INVERSE_DISTANCE
+	p.max_distance = 38.0
+	p.unit_size = 5.0
+	p.panning_strength = 1.6
 	p.position = Vector3(0, 1.2, 0)
 	parent.add_child(p)
 	p.play()
 	return p
+
+## Movement-driven positional footsteps. They follow the figure and stop when
+## its feet stop, including roaming and the final stalk phase.
+func _tick_entity_steps(delta: float) -> void:
+	var can_step := is_instance_valid(_figure) and _mode in ["chase", "stalk", "roam"]
+	if not can_step:
+		_stop_entity_steps()
+		return
+
+	var figure_id := _figure.get_instance_id()
+	if figure_id != _entity_step_figure_id:
+		_entity_step_figure_id = figure_id
+		_entity_step_prev_pos = _figure.global_position
+		_entity_step_stop_delay = 0.0
+		return
+
+	var distance_moved := _entity_step_prev_pos.distance_to(_figure.global_position)
+	_entity_step_prev_pos = _figure.global_position
+	var speed := distance_moved / maxf(delta, 0.001)
+	var allowed_state := _mode != "chase" or _chase_state == "pursue"
+	if speed > 0.15 and allowed_state:
+		_entity_step_stop_delay = 0.14
+		if not is_instance_valid(_chase_steps):
+			_chase_steps = _attach_loop(_figure, _sfx.get("heavy_steps"), -5.0)
+		if is_instance_valid(_chase_steps):
+			var mode_volume := -5.0 if _mode == "chase" else (-8.0 if _mode == "roam" else -10.0)
+			var mode_pitch := clampf(0.72 + speed * 0.085, 0.80, 1.18)
+			_chase_steps.volume_db = mode_volume
+			_chase_steps.pitch_scale = mode_pitch
+	else:
+		_entity_step_stop_delay = maxf(0.0, _entity_step_stop_delay - delta)
+		if _entity_step_stop_delay <= 0.0:
+			_stop_entity_steps()
+
+func _stop_entity_steps() -> void:
+	if is_instance_valid(_chase_steps):
+		_chase_steps.queue_free()
+	_chase_steps = null
+	_entity_step_figure_id = 0
+	_entity_step_stop_delay = 0.0
+
+func _tick_mirror_steps(delta: float) -> void:
+	if _mirror_step_stop_delay > 0.0:
+		_mirror_step_stop_delay = maxf(0.0, _mirror_step_stop_delay - delta)
+	if _mirror_step_stop_delay <= 0.0 and is_instance_valid(_mirror_steps):
+		_mirror_steps.queue_free()
+		_mirror_steps = null
 
 # ---------------------------------------------------------------------------
 # Co-op shared entity: whoever's client is realizing the current scare
@@ -1594,7 +1675,9 @@ func _net_fig_tick(delta: float) -> void:
 		_net_fig_watchdog -= delta
 		if _net_fig_watchdog <= 0.0:
 			mirror_off()
-	var have := is_instance_valid(_figure) and _mode != "stalk" and _mode != "jump"
+	# Only physical/shared modes are replicated. Camera-local horror belongs to
+	# the player who rolled it.
+	var have := is_instance_valid(_figure) and (_mode == "chase" or _mode == "roam")
 	if have:
 		_owns_fig = true
 		_fig_send_timer -= delta
@@ -1611,6 +1694,9 @@ func _net_fig_tick(delta: float) -> void:
 		_world.net_send("figoff", {})
 
 func mirror_update(d: Dictionary) -> void:
+	var incoming_mode := str(d.get("m", "roam"))
+	if incoming_mode == "chase" and (_mode == "peek" or _mode == "shadow"):
+		_end_apparition()
 	_net_fig_active = true
 	_net_fig_watchdog = 10.0
 	if _mirror == null or not is_instance_valid(_mirror):
@@ -1618,21 +1704,22 @@ func mirror_update(d: Dictionary) -> void:
 		if _mirror == null:
 			return
 	var p := Vector3(float(d.get("x", 0.0)), 0.0, float(d.get("z", 0.0)))
-	if _mirror.get_meta("fresh", true):
+	var was_fresh: bool = bool(_mirror.get_meta("fresh", true))
+	if was_fresh:
 		_mirror.global_position = p
 		_mirror.set_meta("fresh", false)
+		_mirror_step_prev_pos = p
 	else:
 		_mirror.global_position = _mirror.global_position.lerp(p, 0.35)
 	_mirror.rotation.y = float(d.get("ry", 0.0))
-	var m := str(d.get("m", "peek"))
+	var m := incoming_mode
 	if m != _mirror_mode:
 		_mirror_mode = m
 		if _mirror_anim:
-			var anim := "ual1_Sprint" if m == "chase" else "ual1_Idle"
+			var anim := "ual1_Sprint" if m == "chase" else ("ual1_Walk" if m == "roam" else "ual1_Idle")
 			if _mirror_anim.has_animation(anim):
 				_mirror_anim.play(anim)
 		if m == "chase":
-			_mirror_steps = _attach_loop(_mirror, _sfx.get("heavy_steps"), -6.0)
 			_mirror_scream = _attach_loop(_mirror, _sfx.get("chase_scream"), -14.0)
 		else:
 			if is_instance_valid(_mirror_steps):
@@ -1641,12 +1728,22 @@ func mirror_update(d: Dictionary) -> void:
 				_mirror_scream.queue_free()
 			_mirror_steps = null
 			_mirror_scream = null
+	if not was_fresh:
+		var moved := _mirror_step_prev_pos.distance_to(_mirror.global_position)
+		_mirror_step_prev_pos = _mirror.global_position
+		if moved > 0.03 and m in ["chase", "roam"]:
+			_mirror_step_stop_delay = 0.24
+			if not is_instance_valid(_mirror_steps):
+				_mirror_steps = _attach_loop(_mirror, _sfx.get("heavy_steps"), -7.0 if m == "chase" else -9.0)
+			if is_instance_valid(_mirror_steps):
+				_mirror_steps.pitch_scale = 1.08 if m == "chase" else 0.92
 
 func mirror_off() -> void:
 	_net_fig_active = false
 	_mirror_mode = ""
 	_mirror_steps = null
 	_mirror_scream = null
+	_mirror_step_stop_delay = 0.0
 	if is_instance_valid(_mirror):
 		_mirror.queue_free()
 	_mirror = null
@@ -1725,6 +1822,18 @@ func _ray_hit(from: Vector3, to: Vector3) -> Dictionary:
 func _ray_clear(from: Vector3, to: Vector3) -> bool:
 	return _ray_hit(from, to).is_empty()
 
+func _figure_pose_clear(pos: Vector3) -> bool:
+	var capsule := CapsuleShape3D.new()
+	capsule.radius = 0.32
+	capsule.height = 2.5
+	var query := PhysicsShapeQueryParameters3D.new()
+	query.shape = capsule
+	query.transform = Transform3D(Basis.IDENTITY, pos + Vector3(0, 1.28, 0))
+	query.collision_mask = 1
+	query.collide_with_areas = false
+	query.collide_with_bodies = true
+	return get_world_3d().direct_space_state.intersect_shape(query, 1).is_empty()
+
 
 func _apply_chase_contortions(delta: float) -> void:
 	if not is_instance_valid(_figure):
@@ -1733,31 +1842,24 @@ func _apply_chase_contortions(delta: float) -> void:
 	if skeletons.size() == 0:
 		return
 	var skeleton: Skeleton3D = skeletons[0]
-	
 	var t := Time.get_ticks_msec() / 1000.0
-	
-	# High frequency twitching
 	var twitch_wave := sin(t * 36.0)
 	var twist_wave := cos(t * 26.0)
-	
-	# Spine twist (body twitching / contorting)
+
 	var spine_idx := skeleton.find_bone("Spine")
 	if spine_idx != -1:
 		var rot := Quaternion(Vector3.UP, twist_wave * 0.42) * Quaternion(Vector3.RIGHT, twitch_wave * 0.15)
 		skeleton.set_bone_pose_rotation(spine_idx, rot)
-		
-	# Neck tilt (head snapping sideways and back)
+
 	var neck_idx := skeleton.find_bone("Neck")
 	if neck_idx != -1:
 		var rot := Quaternion(Vector3.FORWARD, twitch_wave * 0.58) * Quaternion(Vector3.UP, twist_wave * 0.25)
 		skeleton.set_bone_pose_rotation(neck_idx, rot)
-		
-	# Left Arm dislocation
+
 	var l_arm_idx := skeleton.find_bone("LeftUpperArm")
 	if l_arm_idx != -1:
 		var rot := Quaternion(Vector3.BACK, 1.25 + twitch_wave * 0.55) * Quaternion(Vector3.UP, twist_wave * 0.7)
 		skeleton.set_bone_pose_rotation(l_arm_idx, rot)
-	# Right Arm dislocation
 	var r_arm_idx := skeleton.find_bone("RightUpperArm")
 	if r_arm_idx != -1:
 		var rot := Quaternion(Vector3.FORWARD, -1.25 + twist_wave * 0.55) * Quaternion(Vector3.UP, twitch_wave * 0.7)
@@ -1949,17 +2051,16 @@ func _trigger_roam_to_chase() -> void:
 	_chase_state = "pursue"
 	_last_seen_pos = _player.global_position
 	_has_seen_player_this_chase = true
-	_stumble_timer = _rng.randf_range(1.5, 2.5)
+	_stumble_timer = _rng.randf_range(3.8, 5.2)
 	_stumble_duration = 0.0
 	_chase_speed_mult = 1.0
-	request_flicker.emit(1.0)
+	request_flicker.emit(0.65)
 	
 	_play_anim("ual1_Sprint")
 	
 	if has_node("/root/AudioManager") and _sfx.has("chase_scream"):
 		AudioManager.play_sfx(_sfx["chase_scream"], -2.0)
 		
-	_chase_steps = _attach_loop(_figure, _sfx.get("heavy_steps"), -4.0)
 	_chase_scream = _attach_loop(_figure, _sfx.get("chase_scream"), -18.0)
 	
 	chase_started.emit()
