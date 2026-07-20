@@ -437,7 +437,10 @@ func _spawn_fp_body() -> void:
 			
 			_anim_player.add_animation_library("", lib)
 			ModelUtils.set_animation_loops(_anim_player)
-			if _anim_player.has_animation("ual1_Idle"):
+			if _anim_player.has_animation("idle"):
+				_anim_player.play("idle")
+				_cur_clip = "idle"
+			elif _anim_player.has_animation("ual1_Idle"):
 				_anim_player.play("ual1_Idle")
 				_cur_clip = "ual1_Idle"
 
@@ -445,21 +448,32 @@ func _spawn_fp_body() -> void:
 func _update_body_animation() -> void:
 	if _anim_player == null:
 		return
-	_anim_player.speed_scale = 1.5 if is_sprinting else (0.78 if is_crouching else 1.0)
 	var horizontal_speed := Vector2(velocity.x, velocity.z).length()
-	var want := "ual1_Idle"
-	if horizontal_speed > 0.3 and is_on_floor() and not frozen:
-		want = "ual1_Sprint" if is_sprinting else "ual1_Walk"
+	var want := "idle"
+	if is_crouching:
+		want = "crouch_walk" if horizontal_speed > 0.3 and is_on_floor() and not frozen else "crouch_idle"
+		_anim_player.speed_scale = 1.0
+	elif horizontal_speed > 0.3 and is_on_floor() and not frozen:
+		want = "run" if is_sprinting else "walk"
+		_anim_player.speed_scale = 1.0
+	else:
+		want = "idle"
+		_anim_player.speed_scale = 1.0
+
 	if want == _cur_clip:
 		return
+
 	if _anim_player.has_animation(want):
-		_anim_player.play(want)
+		_anim_player.play(want, 0.2)
 		_cur_clip = want
+	elif _anim_player.has_animation("ual1_Idle"):
+		_anim_player.play("ual1_Idle")
+		_cur_clip = "ual1_Idle"
 
 
 func is_bone_to_collapse(skeleton: Skeleton3D, bone_idx: int) -> bool:
 	var collapse_names := [
-		"UpperChest", "Neck", "Head",
+		"Spine", "Spine1", "Spine2", "Chest", "UpperChest", "Neck", "Head",
 		"LeftShoulder", "LeftUpperArm", "LeftLowerArm", "LeftHand",
 		"RightShoulder", "RightUpperArm", "RightLowerArm", "RightHand"
 	]
