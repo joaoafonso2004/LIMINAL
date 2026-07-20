@@ -81,13 +81,14 @@ func set_downed(v: bool) -> void:
 			tw.tween_property(_mesh_root, "rotation:y", 0.28, 0.45)
 			tw.tween_property(_mesh_root, "scale", Vector3(1.0, 0.58, 1.0), 0.45)
 		else:
+			if is_instance_valid(_anim_player) and _anim_player.has_animation("revive"):
+				_anim_player.play("revive", 0.2)
+				_cur_clip = "revive"
 			tw.tween_property(_mesh_root, "position:y", 0.0, 0.35)
 			tw.tween_property(_mesh_root, "rotation:x", 0.0, 0.35)
 			tw.tween_property(_mesh_root, "rotation:z", 0.0, 0.35)
 			tw.tween_property(_mesh_root, "rotation:y", 0.0, 0.35)
 			tw.tween_property(_mesh_root, "scale", Vector3.ONE, 0.35)
-			_cur_clip = ""
-			_update_animation()
 
 
 ## Load and instance the survivor GLB, or null if unavailable.
@@ -268,8 +269,8 @@ func _update_animation() -> void:
 		want = "crouch_walk" if _speed_smooth > WALK_THRESHOLD else "crouch_idle"
 		_anim_player.speed_scale = 1.0
 	elif _speed_smooth > WALK_THRESHOLD:
-		want = "walk"
-		_anim_player.speed_scale = 1.6 if _net_sprinting else 1.0
+		want = "run" if _net_sprinting else "walk"
+		_anim_player.speed_scale = 1.0
 	else:
 		want = "ual1_Idle"
 		_anim_player.speed_scale = 1.0
