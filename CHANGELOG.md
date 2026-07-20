@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.2.1 — Ending Audio Patch
+
+- Removed the temporary `F10` ending shortcut and its spawn-door support code.
+- Reduced the ending video's maximum volume from `-9 dB` to `-22 dB`.
+- Extended the audio fade-in to five seconds and routed the video through the
+  SFX bus so it respects both master and effects volume settings.
+
 ## v0.2.0 — Main Game Release
 
 This version turns the original prototype into the main LIMINAL game build.

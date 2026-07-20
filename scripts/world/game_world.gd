@@ -14,9 +14,9 @@ const HVAC_PATH := ""
 const DRONE_PATH := ""
 const FINAL_MUSIC := "res://assets/audio/music/music_climax_final_exit_drone.mp3"
 const ESCAPE_VIDEO := "res://assets/video/END.ogv"
-const END_VIDEO_START_VOLUME_DB := -48.0
-const END_VIDEO_TARGET_VOLUME_DB := -9.0
-const END_VIDEO_AUDIO_FADE_SECONDS := 4.0
+const END_VIDEO_START_VOLUME_DB := -60.0
+const END_VIDEO_TARGET_VOLUME_DB := -22.0
+const END_VIDEO_AUDIO_FADE_SECONDS := 5.0
 
 # Timings (seconds) — pacing knobs live in scripts/tuning.gd
 const FINAL_PHASE_TIME := Tuning.FINAL_PHASE_TIME
@@ -482,10 +482,6 @@ func _process(delta: float) -> void:
 			_play_radar_ping()
 
 func _unhandled_input(event: InputEvent) -> void:
-	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_F10:
-		_debug_jump_to_exit()
-		get_viewport().set_input_as_handled()
-		return
 	if not _is_downed:
 		return
 	if event is InputEventMouseButton and event.pressed:
@@ -503,43 +499,6 @@ func _unhandled_input(event: InputEvent) -> void:
 			_downed_camera_pitch - motion.relative.y * sensitivity,
 			deg_to_rad(12.0), deg_to_rad(72.0))
 		get_viewport().set_input_as_handled()
-
-## F10 is an intentionally temporary release-build shortcut for reviewing the
-## complete ending without playing through all objectives. It creates the real
-## final door at spawn and is solo-only so it cannot desynchronise co-op.
-func _debug_jump_to_exit() -> void:
-	if _ended or _is_mp or not is_instance_valid(_player) or not is_instance_valid(_maze):
-		return
-	if not _maze.has_method("debug_prepare_exit"):
-		return
-
-	if is_instance_valid(_intro_canvas):
-		_intro_canvas.visible = false
-		_intro_canvas.queue_free()
-		_intro_canvas = null
-	_snus_done = true
-	_exit_enabled = true
-	_final_started = true
-
-	# Nothing should interrupt an ending review after the teleport.
-	if is_instance_valid(_entity):
-		_entity.process_mode = Node.PROCESS_MODE_DISABLED
-		_entity.visible = false
-	if is_instance_valid(_mimic):
-		_mimic.process_mode = Node.PROCESS_MODE_DISABLED
-		_mimic.visible = false
-
-	_player.global_position = _maze.debug_prepare_exit()
-	_player.rotation = Vector3.ZERO
-	_player.velocity = Vector3.ZERO
-	if _player.has_method("set_frozen"):
-		_player.set_frozen(false)
-	if is_instance_valid(_camera):
-		_camera.position = Vector3(0.0, 1.55, 0.0)
-		_camera.rotation = Vector3.ZERO
-		_camera.fov = 72.0
-	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
-	_set_current_mission("ENDING TEST — WALK THROUGH THE DOOR", true)
 
 func _tick_downed_and_revive(delta: float) -> void:
 	# 1. Downed local player countdown & spectate live teammate
@@ -1612,6 +1571,9 @@ func _play_escape_video_or_fallback() -> void:
 	var video := VideoStreamPlayer.new()
 	video.stream = load(ESCAPE_VIDEO)
 	video.expand = true
+	# Treat the film as part of the effects mix, so both master and SFX volume
+	# settings apply. Its source is heavily mastered, hence the conservative cap.
+	video.bus = "SFX"
 	# Start effectively silent. The video's first sound should emerge from the
 	# black threshold instead of cutting into the end of the door movement.
 	video.volume_db = END_VIDEO_START_VOLUME_DB

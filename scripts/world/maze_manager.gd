@@ -643,20 +643,6 @@ func _maybe_place_exit(_pc: Vector2i) -> void:
 func exit_world_pos() -> Vector3:
 	return world_center(EXIT_CELL)
 
-## Development shortcut used by GameWorld's F10 ending test. It creates the
-## real final doorway in the starting cell, using the same model, threshold
-## trigger and cinematic data as the normal deep-map exit.
-func debug_prepare_exit() -> Vector3:
-	const DEBUG_EXIT_CELL := Vector2i.ZERO
-	_exit_available = true
-	if not _exit_placed:
-		_exit_cell = DEBUG_EXIT_CELL
-		if not _cells.has(DEBUG_EXIT_CELL):
-			_build_cell(DEBUG_EXIT_CELL)
-		_spawn_exit_room(DEBUG_EXIT_CELL)
-		_exit_placed = true
-	return to_global(world_center(DEBUG_EXIT_CELL) + Vector3(0.0, 0.05, 0.45))
-
 func _spawn_exit_room(c: Vector2i) -> void:
 	var d = _cells.get(c)
 	if d == null:
