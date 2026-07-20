@@ -72,21 +72,22 @@ func set_downed(v: bool) -> void:
 	if is_instance_valid(_mesh_root):
 		var tw := create_tween().set_parallel(true).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
 		if v:
+			if is_instance_valid(_anim_player) and _anim_player.has_animation("downed"):
+				_anim_player.play("downed", 0.25)
+				_cur_clip = "downed"
 			tw.tween_property(_mesh_root, "position:y", 0.06, 0.45)
 			tw.tween_property(_mesh_root, "rotation:x", -1.42, 0.45)
 			tw.tween_property(_mesh_root, "rotation:z", 0.42, 0.45)
 			tw.tween_property(_mesh_root, "rotation:y", 0.28, 0.45)
 			tw.tween_property(_mesh_root, "scale", Vector3(1.0, 0.58, 1.0), 0.45)
-			if is_instance_valid(_anim_player):
-				_anim_player.pause()
 		else:
 			tw.tween_property(_mesh_root, "position:y", 0.0, 0.35)
 			tw.tween_property(_mesh_root, "rotation:x", 0.0, 0.35)
 			tw.tween_property(_mesh_root, "rotation:z", 0.0, 0.35)
 			tw.tween_property(_mesh_root, "rotation:y", 0.0, 0.35)
 			tw.tween_property(_mesh_root, "scale", Vector3.ONE, 0.35)
-			if is_instance_valid(_anim_player):
-				_anim_player.play(_cur_clip)
+			_cur_clip = ""
+			_update_animation()
 
 
 ## Load and instance the survivor GLB, or null if unavailable.
@@ -127,18 +128,29 @@ func _setup_model(model: Node3D) -> void:
 
 func _apply_player_tint(model: Node3D) -> void:
 	# Keep natural GLB character textures intact so model never renders purple.
-	# Metallic dielectric fix to prevent void black reflections:
+	# Metallic dielectric fix to prevent void black/purple reflections:
 	for child in model.find_children("*", "MeshInstance3D"):
 		var mi := child as MeshInstance3D
 		if mi == null or mi.mesh == null:
 			continue
 		for surface in mi.mesh.get_surface_count():
-			var source := mi.get_active_material(surface)
-			if source is StandardMaterial3D:
-				var mat := (source as StandardMaterial3D).duplicate(true) as StandardMaterial3D
-				mat.metallic = 0.0
-				mat.roughness = 0.75
-				mi.set_surface_override_material(surface, mat)
+			var active := mi.get_active_material(surface)
+			if active == null and mi.mesh:
+				active = mi.mesh.surface_get_material(surface)
+
+			var mat: BaseMaterial3D = null
+			if active is BaseMaterial3D:
+				mat = active.duplicate(true) as BaseMaterial3D
+			else:
+				mat = StandardMaterial3D.new()
+
+			mat.metallic = 0.0
+			mat.roughness = 0.82
+			mat.specular = 0.25
+			# Guard against broken magenta/purple texture fallbacks
+			if mat.albedo_color.r > 0.4 and mat.albedo_color.b > 0.4 and mat.albedo_color.g < 0.25:
+				mat.albedo_color = Color(0.82, 0.78, 0.72)
+			mi.set_surface_override_material(surface, mat)
 
 	var tint: Color = PLAYER_TINTS[posmod(player_id, PLAYER_TINTS.size())]
 	_setup_overhead_tag(tint)
@@ -248,19 +260,29 @@ func _tick_crouch_posture(delta: float) -> void:
 
 
 func _update_animation() -> void:
-	if _anim_player == null:
+	if _anim_player == null or is_downed:
 		return
-	# The clips alone have a similar-looking cadence. Explicit playback speed
-	# makes remote legs match the actual networked movement state.
-	_anim_player.speed_scale = 1.5 if _net_sprinting else (0.78 if _net_crouching else 1.0)
+
 	var want := "ual1_Idle"
-	if _speed_smooth > WALK_THRESHOLD:
-		want = "ual1_Sprint" if _net_sprinting else "ual1_Walk"
+	if _net_crouching:
+		want = "crouch_walk" if _speed_smooth > WALK_THRESHOLD else "crouch_idle"
+		_anim_player.speed_scale = 1.0
+	elif _speed_smooth > WALK_THRESHOLD:
+		want = "walk"
+		_anim_player.speed_scale = 1.6 if _net_sprinting else 1.0
+	else:
+		want = "ual1_Idle"
+		_anim_player.speed_scale = 1.0
+
 	if want == _cur_clip:
 		return
+
 	if _anim_player.has_animation(want):
-		_anim_player.play(want)
+		_anim_player.play(want, 0.2)
 		_cur_clip = want
+	elif _anim_player.has_animation("ual1_Walk") and _speed_smooth > WALK_THRESHOLD:
+		_anim_player.play("ual1_Walk", 0.2)
+		_cur_clip = "ual1_Walk"
 
 
 func _play_remote_step() -> void:
