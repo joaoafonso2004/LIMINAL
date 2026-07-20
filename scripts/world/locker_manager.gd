@@ -1,5 +1,6 @@
 extends Node3D
-## Handles locker placement, static collision generation, proximity checks, and the player hide state.
+## Places sealed lockers against real maze walls and exposes proximity checks.
+## They are environmental storytelling props, not hiding spots.
 
 const LOCKER_PATH := "res://assets/props/items/locker.glb"
 const TOTAL_LOCKERS := 4
@@ -10,30 +11,31 @@ var _player: Node3D = null
 var _maze: Node3D = null
 var _locker_scene: PackedScene = null
 var _lockers: Array[Node3D] = []
-var _is_hidden := false
-var _inside_locker_node: Node3D = null
-var _player_original_pos := Vector3.ZERO
-
-signal player_hide_state_changed(is_hidden: bool)
+var _spawned := false
 
 
 func setup(player: Node3D, maze: Node3D) -> void:
 	_player = player
 	_maze = maze
+	if is_node_ready() and _locker_scene:
+		_spawn_all()
 
 
 func _ready() -> void:
 	if ResourceLoader.exists(LOCKER_PATH):
 		_locker_scene = load(LOCKER_PATH)
-	_spawn_all()
+	if is_instance_valid(_maze):
+		_spawn_all()
 
 
 func _spawn_all() -> void:
+	if _spawned or not _locker_scene or not is_instance_valid(_maze):
+		return
+	_spawned = true
 	var cells := _generate_spawn_cells()
 	for i in cells.size():
 		var cell: Vector2i = cells[i]
-		var pos := Vector3(cell.x * CELL, 0.0, cell.y * CELL)
-		_spawn_locker(i, pos)
+		_spawn_locker(i, cell)
 
 
 func _generate_spawn_cells() -> Array[Vector2i]:
@@ -77,36 +79,38 @@ func _generate_spawn_cells() -> Array[Vector2i]:
 	return cells
 
 
-func _spawn_locker(id: int, pos: Vector3) -> void:
-	if not _locker_scene:
+func _spawn_locker(id: int, cell: Vector2i) -> void:
+	if not _locker_scene or not is_instance_valid(_maze) or not _maze.has_method("wall_mount_near"):
 		return
-	
+	var mount: Dictionary = _maze.wall_mount_near(cell, 0.0)
+	# A missing wall is safer than another locker floating in open space.
+	if mount.is_empty():
+		return
+
 	var root := Node3D.new()
 	root.name = "Locker_" + str(id)
 	add_child(root)
-	root.global_position = pos
+	root.global_position = Vector3(mount["position"])
+	root.rotation.y = float(mount["rotation_y"])
+	root.set_meta("wall_cell", mount["cell"])
 	
 	# Instantiate locker mesh model
-	var model = _locker_scene.instantiate()
+	var model := _locker_scene.instantiate() as Node3D
 	root.add_child(model)
 	
-	# Setup model: scale it to match player height
-	var model_utils = load("res://scripts/utils/model_utils.gd")
-	if model_utils:
-		model_utils.setup_character_for_movement(model, 2.15)
+	# The wall mount's local +Z points into the corridor. Move the model just
+	# far enough forward that its back panel physically touches the wall face.
+	ModelUtils.setup_character_for_movement(model, 2.15)
+	var model_bounds := ModelUtils._get_combined_aabb(model)
+	model.position.z += -model_bounds.position.z + 0.015
 	
-	# Rotate locker randomly to face one of the open walls
-	var rng := RandomNumberGenerator.new()
-	rng.seed = id * 123 + 456
-	var angle := rng.randi_range(0, 3) * 90.0
-	model.rotation_degrees.y = angle
-	
-	# Add static collision so the player doesn't walk straight through it
+	# Match collision to the placed asset instead of leaving a large invisible
+	# cube around it.
 	var col_shape := CollisionShape3D.new()
 	var box := BoxShape3D.new()
-	box.size = Vector3(1.1, 2.2, 1.1)
+	box.size = model_bounds.size
 	col_shape.shape = box
-	col_shape.position.y = 1.1
+	col_shape.position = model.position + model_bounds.get_center()
 	
 	var static_body := StaticBody3D.new()
 	static_body.collision_layer = 1
@@ -118,10 +122,6 @@ func _spawn_locker(id: int, pos: Vector3) -> void:
 
 
 func get_nearest_locker_in_range(from: Vector3) -> Node3D:
-	if _is_hidden and is_instance_valid(_inside_locker_node):
-		# If already inside, return it so the prompt knows we can leave it
-		return _inside_locker_node
-		
 	var best: Node3D = null
 	var best_d := INTERACT_RANGE
 	for l in _lockers:
@@ -134,66 +134,5 @@ func get_nearest_locker_in_range(from: Vector3) -> Node3D:
 	return best
 
 
-func is_player_inside() -> bool:
-	return _is_hidden
-
-
-func _set_locker_door_visible(locker_node: Node3D, vis: bool) -> void:
-	if not is_instance_valid(locker_node):
-		return
-	for child in locker_node.find_children("*", "MeshInstance3D"):
-		var n := child.name.to_lower()
-		if "door" in n or "gate" in n or "front" in n or "panel" in n:
-			child.visible = vis
-
-
-func toggle_hide_in_locker() -> bool:
-	if not is_instance_valid(_player):
-		return false
-		
-	var nearest = get_nearest_locker_in_range(_player.global_position)
-	if not is_instance_valid(nearest):
-		return false
-		
-	if _is_hidden:
-		# Exit locker
-		_is_hidden = false
-		_set_locker_door_visible(nearest, true)
-		_player.global_position = _player_original_pos
-		if _player.has_method("set_frozen"):
-			_player.set_frozen(false)
-		else:
-			_player.frozen = false
-		
-		# Re-enable collision
-		_player.collision_layer = 2
-		_player.collision_mask = 1
-		
-		_player.set_meta("is_hiding", false)
-		_inside_locker_node = null
-		player_hide_state_changed.emit(false)
-	else:
-		# Enter locker
-		_is_hidden = true
-		_inside_locker_node = nearest
-		_player_original_pos = _player.global_position
-		_set_locker_door_visible(nearest, false)
-		
-		# Move player directly inside the locker node position & face door
-		_player.global_position = nearest.global_position
-		if nearest.get_child_count() > 0:
-			_player.rotation.y = nearest.get_child(0).rotation.y
-		
-		if _player.has_method("set_frozen"):
-			_player.set_frozen(true)
-		else:
-			_player.frozen = true
-		
-		# Disable collision so entity can't touch player and player doesn't collide with locker
-		_player.collision_layer = 0
-		_player.collision_mask = 0
-		
-		_player.set_meta("is_hiding", true)
-		player_hide_state_changed.emit(true)
-		
-	return true
+func inspect_nearest(from: Vector3) -> bool:
+	return is_instance_valid(get_nearest_locker_in_range(from))

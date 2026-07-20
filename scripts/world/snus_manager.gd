@@ -1,6 +1,7 @@
 extends Node3D
-## Scatters 5 snus tins across the maze at FIXED cell centers (deterministic,
-## so every co-op client agrees on where they are). Collect all 5 and the way
+## Scatters 5 snus tins across seeded, reachable sectors of the maze. Every
+## co-op client gets the same cells, while a new run gets a new route. Collect
+## all 5 and the way
 ## out unlocks. Pickup is proximity + E. In co-op, pickups are shared: picking
 ## one up broadcasts it and it vanishes for everyone.
 
@@ -17,13 +18,6 @@ const SNUS_PATH := "res://assets/props/items/SNUS.glb"
 const PICKUP_SFX := "res://assets/audio/sfx/pickup/pickup_snus_pickup.mp3"
 const UNLOCK_SFX := "res://assets/audio/sfx/pickup/pickup_escape_unlocked.mp3"
 
-# Fixed spawn cells, spread wide around the origin start room. Cell centers are
-# always open floor, so tins never bury in a wall.
-const SPAWN_CELLS := [
-	Vector2i(9, 2), Vector2i(-3, 10), Vector2i(-11, -4),
-	Vector2i(6, -12), Vector2i(-9, 7),
-]
-
 var _players: Array[Node3D] = []      # local + remote bodies to test proximity against
 var _local_player: Node3D = null
 var _maze: Node3D = null
@@ -33,11 +27,19 @@ var _snus_scene: PackedScene = null
 var _pickup_stream: AudioStream = null
 var _unlock_stream: AudioStream = null
 var _time := 0.0
+var _spawned := false
+var _spawn_cells: Array[Vector2i] = []
+var _run_seed: int = 1
 
 
 func setup(local_player: Node3D, maze: Node3D) -> void:
 	_local_player = local_player
 	_maze = maze
+	if not _spawned:
+		_spawn_all()
+
+func set_run_seed(value: int) -> void:
+	_run_seed = maxi(1, value)
 
 
 func _ready() -> void:
@@ -47,7 +49,6 @@ func _ready() -> void:
 		_pickup_stream = load(PICKUP_SFX)
 	if ResourceLoader.exists(UNLOCK_SFX):
 		_unlock_stream = load(UNLOCK_SFX)
-	_spawn_all()
 
 
 func register_player_body(body: Node3D) -> void:
@@ -59,73 +60,59 @@ func register_player_body(body: Node3D) -> void:
 func _generate_spawn_cells() -> Array[Vector2i]:
 	var cells: Array[Vector2i] = []
 	var rng := RandomNumberGenerator.new()
-	
-	# Determine seed from NetManager room code or randomize for single player
-	var seed_val := 0
-	if has_node("/root/NetManager") and NetManager.is_multiplayer and NetManager.room_code != "":
-		for byte in NetManager.room_code.to_utf8_buffer():
-			seed_val = (seed_val * 33 + byte) & 0xFFFFFFFF
-		rng.seed = seed_val
-	else:
-		rng.randomize()
-		
-	# 5 Sectors: NW, NE, SW, SE, and Center/Outer
-	var sectors := [
-		[Rect2i(-14, 4, 11, 11), "NW"],
-		[Rect2i(4, 4, 11, 11), "NE"],
-		[Rect2i(-14, -14, 11, 11), "SW"],
-		[Rect2i(4, -14, 11, 11), "SE"],
-		[Rect2i(-13, -13, 26, 26), "Outer"]
+	rng.seed = _run_seed ^ 0x534E5553
+
+	var sectors: Array[Rect2i] = [
+		Rect2i(-16, 4, 13, 13), Rect2i(4, 4, 13, 13),
+		Rect2i(-16, -16, 13, 13), Rect2i(4, -16, 13, 13),
+		Rect2i(-14, -14, 29, 29),
 	]
-	
-	for sec in sectors:
-		var rect: Rect2i = sec[0]
+
+	for rect in sectors:
 		var found := false
-		var attempts := 0
-		while not found and attempts < 400:
-			attempts += 1
+		for _attempt in 320:
 			var x := rng.randi_range(rect.position.x, rect.position.x + rect.size.x - 1)
 			var y := rng.randi_range(rect.position.y, rect.position.y + rect.size.y - 1)
 			var c := Vector2i(x, y)
-			
-			# Avoid starting room (radius 3)
-			if abs(x) <= 3 and abs(y) <= 3:
+			if abs(x) <= 2 and abs(y) <= 2:
 				continue
-				
-			# Avoid exit cell neighborhood
 			if c.distance_squared_to(Vector2i(14, -16)) < 9:
 				continue
-				
-			# Verify distance from all existing cells (min 9 cells / 36 meters)
 			var too_close := false
 			for existing in cells:
-				if existing.distance_to(c) < 9.0:
+				if existing.distance_to(c) < 7.5:
 					too_close = true
 					break
 			if too_close:
 				continue
-				
-			# Verify it's an open cell in the maze layout
 			if _maze and _maze.has_method("is_cell_open"):
-				if not _maze.is_cell_open(c):
+				if not _maze.is_cell_open(c) or _maze.corridor_path(c, Vector2i.ZERO, 1400).is_empty():
 					continue
-					
 			cells.append(c)
 			found = true
-			
-	# Fallback if generation failed
+			break
+
 	if cells.size() < TOTAL:
-		cells = [
-			Vector2i(10, 8), Vector2i(-9, 10), Vector2i(-11, -8),
-			Vector2i(8, -12), Vector2i(-8, 3)
+		var safe: Array[Vector2i] = [
+			Vector2i(-15, 15), Vector2i(15, 15), Vector2i(-15, -15),
+			Vector2i(10, -15), Vector2i(0, 3)
 		]
+		for i in range(safe.size() - 1, 0, -1):
+			var swap_index := rng.randi_range(0, i)
+			var value := safe[i]
+			safe[i] = safe[swap_index]
+			safe[swap_index] = value
+		cells = safe
 	return cells
 
 
 func _spawn_all() -> void:
-	var spawn_cells := _generate_spawn_cells()
-	for i in spawn_cells.size():
-		var cell: Vector2i = spawn_cells[i]
+	if _spawned:
+		return
+	_spawned = true
+	_spawn_cells = _generate_spawn_cells()
+	for i in _spawn_cells.size():
+		var cell: Vector2i = _spawn_cells[i]
 		var pos := Vector3(cell.x * CELL, 0.0, cell.y * CELL)
 		_spawn_box(i, pos)
 
@@ -230,13 +217,6 @@ func _process(delta: float) -> void:
 			if is_instance_valid(_local_player):
 				b.visible = b.global_position.distance_to(_local_player.global_position) < VISIBLE_RANGE
 
-	# Local proximity pickup on E.
-	if is_instance_valid(_local_player) and Input.is_action_just_pressed("interact"):
-		var pid := _nearest_uncollected(_local_player.global_position)
-		if pid >= 0:
-			_do_collect(pid, true)
-
-
 func _nearest_uncollected(from: Vector3) -> int:
 	var best := -1
 	var best_d := PICKUP_RANGE
@@ -253,27 +233,56 @@ func _nearest_uncollected(from: Vector3) -> int:
 	return best
 
 
+## The world interaction coordinator owns the E key so one press can never
+## answer a phone, enter a locker, and collect a tin at the same time.
+func collect_nearest(from: Vector3) -> bool:
+	var id := _nearest_uncollected(from)
+	if id < 0:
+		return false
+	var net_manager := get_node_or_null("/root/NetManager")
+	if net_manager and bool(net_manager.get("is_multiplayer")) and not bool(net_manager.get("is_host")):
+		net_manager.call("send", "snus_request", {"id": id})
+		return true
+	_do_collect(id, true)
+	return true
+
+func host_collect_id(id: int, collector_position: Vector3) -> bool:
+	if _collected.has(id):
+		return false
+	var box: Node3D = _boxes.get(id)
+	if not is_instance_valid(box):
+		return false
+	var flat_delta := Vector2(box.global_position.x - collector_position.x, box.global_position.z - collector_position.z)
+	if flat_delta.length() > PICKUP_RANGE + 0.8:
+		return false
+	_do_collect(id, true)
+	return true
+
+
 func _do_collect(id: int, broadcast: bool) -> void:
 	if _collected.has(id):
 		return
 	_collected[id] = true
 	var b = _boxes.get(id)
+	var pickup_position: Vector3 = b.global_position if b and is_instance_valid(b) else Vector3.ZERO
 	if b and is_instance_valid(b):
 		b.queue_free()
 	_boxes.erase(id)
 
-	if has_node("/root/AudioManager") and _pickup_stream:
-		AudioManager.play_sfx(_pickup_stream, -4.0)
+	var audio_manager := get_node_or_null("/root/AudioManager")
+	if audio_manager and _pickup_stream:
+		audio_manager.call("play_sfx_3d", self, _pickup_stream, pickup_position, -5.0, 18.0, 1.0)
 
 	# Co-op: tell everyone this tin is gone.
-	if broadcast and has_node("/root/NetManager") and NetManager.is_multiplayer:
-		NetManager.send("snus", {"id": id})
+	var net_manager := get_node_or_null("/root/NetManager")
+	if broadcast and net_manager and bool(net_manager.get("is_multiplayer")):
+		net_manager.call("send", "snus", {"id": id})
 
 	var n := _collected.size()
 	count_changed.emit(n, TOTAL)
 	if n >= TOTAL:
-		if has_node("/root/AudioManager") and _unlock_stream:
-			AudioManager.play_sfx(_unlock_stream, -2.0)
+		if audio_manager and _unlock_stream:
+			audio_manager.call("play_sfx", _unlock_stream, -2.0)
 		all_collected.emit()
 
 
@@ -284,6 +293,9 @@ func remote_collect(id: int) -> void:
 
 func get_collected() -> int:
 	return _collected.size()
+
+func get_spawn_cells() -> Array[Vector2i]:
+	return _spawn_cells.duplicate()
 
 func get_nearest_uncollected_pos(from: Vector3) -> Vector3:
 	var best_pos := Vector3.ZERO
@@ -304,4 +316,3 @@ func get_nearest_uncollected_pos(from: Vector3) -> Vector3:
 
 func is_snus_in_range(from: Vector3) -> bool:
 	return _nearest_uncollected(from) >= 0
-

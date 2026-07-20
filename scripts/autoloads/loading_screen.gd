@@ -34,7 +34,7 @@ const PRELOAD_PATHS: PackedStringArray = [
 	"res://assets/ui/wordmark_title.png",
 	# -- World textures --
 	"res://assets/textures/backgrounds/menu_void_corridor.png",
-	"res://assets/textures/floors/backrooms_damp_carpet.png",
+	"res://assets/textures/floors/backrooms_carpet_clean.png",
 	"res://assets/textures/floors/backrooms_linoleum.png",
 	"res://assets/textures/surfaces/backrooms_ceiling_tiles.png",
 	"res://assets/textures/walls/backrooms_yellow_wallpaper.png",
@@ -132,112 +132,35 @@ func _build_ui() -> void:
 	_root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
 
-	# Solid black backdrop -- no grey flash even if the scenery image is
-	# missing or still importing.
+	# One uninterrupted matte field. The loading screen communicates only
+	# progress; it contains no branding, lore, tips, or percentage copy.
 	var bg := ColorRect.new()
-	bg.color = Color.BLACK
+	bg.color = Color(0.59, 0.56, 0.43, 1.0)
 	_root.add_child(bg)
 	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 
-	# Scenery image (loaded at runtime so we don't crash if missing).
-	if ResourceLoader.exists("res://assets/ui/loading_screen.png"):
-		var img := TextureRect.new()
-		img.texture = load("res://assets/ui/loading_screen.png")
-		img.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
-		img.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-		_root.add_child(img)
-		img.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-
-	# Subtle vignette so the wordmark and bar read against busy scenery.
-	var vignette := ColorRect.new()
-	vignette.color = Color(0, 0, 0, 0.30)
-	_root.add_child(vignette)
-	vignette.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-
-	# Wordmark -- R1: explicit anchors, symmetric around 0.5. No
-	# CenterContainer wrapper (would collapse on a CanvasLayer).
-	if ResourceLoader.exists("res://assets/ui/wordmark_title.png"):
-		var wm := TextureRect.new()
-		wm.texture = load("res://assets/ui/wordmark_title.png")
-		wm.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-		wm.expand_mode = TextureRect.EXPAND_FIT_WIDTH_PROPORTIONAL
-		_root.add_child(wm)
-		wm.anchor_left = 0.5
-		wm.anchor_right = 0.5
-		wm.anchor_top = 0.0
-		wm.anchor_bottom = 0.0
-		wm.offset_left = -450
-		wm.offset_right = 450
-		wm.offset_top = 80
-		wm.offset_bottom = 380
-
-	# Bottom band -- R2: anchor_top = anchor_bottom = 1.0, NEGATIVE
-	# offset_top so the band sits INSIDE the viewport (not below).
-	var band := Control.new()
-	_root.add_child(band)
-	band.anchor_left = 0.5
-	band.anchor_right = 0.5
-	band.anchor_top = 1.0
-	band.anchor_bottom = 1.0
-	band.offset_left = -400
-	band.offset_right = 400
-	band.offset_top = -180
-	band.offset_bottom = -30
-
-	var vbox := VBoxContainer.new()
-	band.add_child(vbox)
-	vbox.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	vbox.add_theme_constant_override("separation", 10)
-
-	# Creator Tag
-	var creator := Label.new()
-	creator.text = "Created by João Afonso"
-	creator.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	creator.add_theme_color_override("font_color", Color(0.95, 0.82, 0.45, 0.9))
-	creator.add_theme_font_size_override("font_size", 16)
-	vbox.add_child(creator)
-
-	# Backrooms Tip
-	var tips := [
-		"TIP: Do not stare into dark corridor corners for too long.",
-		"TIP: Hold your breath (Space / RMB) inside lockers when the entity is near.",
-		"TIP: Crouching muffles your footsteps and reduces entity detection range.",
-		"TIP: If you hear buzzing fluorescent lights, something is lurking nearby."
-	]
-	var tip_label := Label.new()
-	tip_label.text = tips[randi() % tips.size()]
-	tip_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	tip_label.add_theme_color_override("font_color", Color(0.8, 0.76, 0.62, 0.75))
-	tip_label.add_theme_font_size_override("font_size", 15)
-	vbox.add_child(tip_label)
-
+	# Kept as a non-rendered compatibility target for the VFX warm-up path.
 	_status = Label.new()
-	_status.text = "Loading... 0%"
-	_status.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_status.add_theme_color_override("font_color", Color(0.95, 0.9, 0.75, 1.0))
-	_status.add_theme_font_size_override("font_size", 18)
-	vbox.add_child(_status)
+	_status.visible = false
+	_root.add_child(_status)
 
-	var accent := _resolve_accent()
 	_progress = ProgressBar.new()
 	_progress.min_value = 0.0
 	_progress.max_value = 1.0
 	_progress.show_percentage = false
-	_progress.custom_minimum_size = Vector2(0, 18)
+	_root.add_child(_progress)
+	_progress.anchor_left = 0.08
+	_progress.anchor_right = 0.43
+	_progress.anchor_top = 0.88
+	_progress.anchor_bottom = 0.88
+	_progress.offset_top = -1.0
+	_progress.offset_bottom = 1.0
 	var pb_bg := StyleBoxFlat.new()
-	pb_bg.bg_color = Color(0.06, 0.06, 0.08, 0.9)
-	pb_bg.border_width_left = 1
-	pb_bg.border_width_top = 1
-	pb_bg.border_width_right = 1
-	pb_bg.border_width_bottom = 1
-	pb_bg.border_color = Color(0.3, 0.26, 0.18, 0.6)
-	pb_bg.set_corner_radius_all(4)
+	pb_bg.bg_color = Color(0.39, 0.37, 0.29, 1.0)
 	var pb_fill := StyleBoxFlat.new()
-	pb_fill.bg_color = Color(0.96, 0.75, 0.35, 1.0)
-	pb_fill.set_corner_radius_all(4)
+	pb_fill.bg_color = Color(0.025, 0.028, 0.025, 1.0)
 	_progress.add_theme_stylebox_override("background", pb_bg)
 	_progress.add_theme_stylebox_override("fill", pb_fill)
-	vbox.add_child(_progress)
 
 
 func _show() -> void:

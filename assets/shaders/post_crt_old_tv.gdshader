@@ -12,14 +12,13 @@ uniform float dread : hint_range(0.0, 1.0) = 0.0;
 uniform float pulse : hint_range(0.0, 1.0) = 0.0;
 
 // Look constants (documented in docs/design/game-design.md).
-// Grade target: dark A24-still — heavy red/cyan fringing, crushed brown-black
-// shadows, drained sepia colour.
+// Grade target: sickly fluorescent Level 0 yellow with deep neutral shadows.
 const float CURVATURE = 0.035;         // subtle realistic CRT barrel glass curvature
 const float ABERRATION_BASE = 0.0007;  // subtle RGB lens split
 const float SCANLINE_BASE = 0.05;      // scanline texture
 const float SNOW_BASE = 0.012;          // TV snow amount at rest
 const float SHADOW_GAMMA = 1.06;        // cinematic deep shadows
-const vec3 PHOSPHOR_TINT = vec3(1.02, 0.98, 0.92); // warm analog phosphor push
+const vec3 PHOSPHOR_TINT = vec3(0.99, 1.0, 0.91); // yellow-green analog phosphor
 
 // Cheap deterministic hash -> [0,1)
 float hash21(vec2 p) {
@@ -52,7 +51,7 @@ void fragment() {
 	float b = texture(screen_tex, uv - vec2(ab, 0.0)).b;
 	vec3 col = vec3(r, g, b);
 
-	// --- Drained colour, pushed toward dirty sepia; shadows crushed black ---
+	// --- Drained fluorescent colour; shadows remain crushed black ---
 	float lum = dot(col, vec3(0.299, 0.587, 0.114));
 	col = mix(col, vec3(lum), 0.32 + dread * 0.18);
 	col *= PHOSPHOR_TINT;

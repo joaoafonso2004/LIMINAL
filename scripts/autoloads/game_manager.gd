@@ -3,14 +3,19 @@ extends Node
 ## moment-to-moment director logic; this holds cross-scene state + restart.
 
 signal run_ended(reason: String)   # "exit" | "caught" | "secret"
+signal cassette_unlocked
+
+const PROGRESS_PATH := "user://progress.cfg"
 
 var run_time: float = 0.0          # seconds since the run began
 var look_back_count: int = 0       # how often the player turned to look behind
 var is_running: bool = false
 var last_ending: String = ""
+var cassette_found := false
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_PAUSABLE
+	_load_progress()
 
 func _process(delta: float) -> void:
 	if is_running:
@@ -25,6 +30,20 @@ func start_run() -> void:
 func register_look_back() -> void:
 	look_back_count += 1
 
+func unlock_cassette() -> void:
+	if cassette_found:
+		return
+	cassette_found = true
+	var config := ConfigFile.new()
+	config.set_value("collectibles", "cassette_found", true)
+	config.save(PROGRESS_PATH)
+	cassette_unlocked.emit()
+
+func _load_progress() -> void:
+	var config := ConfigFile.new()
+	if config.load(PROGRESS_PATH) == OK:
+		cassette_found = bool(config.get_value("collectibles", "cassette_found", false))
+
 func end_run(reason: String) -> void:
 	if not is_running:
 		return
@@ -35,6 +54,10 @@ func end_run(reason: String) -> void:
 func restart() -> void:
 	get_tree().paused = false
 	is_running = false
+	# A solo retry is a genuinely new run. Co-op keeps the room-derived seed so
+	# clients cannot diverge if they reload at slightly different moments.
+	if has_node("/root/NetManager") and not NetManager.is_multiplayer:
+		NetManager.reset_run_seed()
 	if has_node("/root/LoadingScreen"):
 		var ls := get_node("/root/LoadingScreen")
 		if ls.has_method("change_scene"):

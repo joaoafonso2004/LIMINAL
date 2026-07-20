@@ -22,6 +22,7 @@ func _ready() -> void:
 		_unlocked = true
 	_setup_buses()
 	_create_players()
+	_setup_sfx_compressor()
 	_setup_limiter()
 
 func _input(event: InputEvent) -> void:
@@ -180,6 +181,24 @@ func _setup_limiter() -> void:
 			limiter.soft_clip_db = 1.0
 			AudioServer.add_bus_effect(master_idx, limiter)
 
+func _setup_sfx_compressor() -> void:
+	var sfx_idx := AudioServer.get_bus_index("SFX")
+	if sfx_idx < 0:
+		return
+	for i in AudioServer.get_bus_effect_count(sfx_idx):
+		if AudioServer.get_bus_effect(sfx_idx, i) is AudioEffectCompressor:
+			return
+	# Multiple 3D footsteps, callouts and entity layers can arrive together in
+	# co-op. Gentle bus compression keeps the mix readable without flattening a
+	# deliberate jumpscare transient.
+	var compressor := AudioEffectCompressor.new()
+	compressor.threshold = -10.0
+	compressor.ratio = 3.0
+	compressor.gain = 0.0
+	compressor.attack_us = 9000.0
+	compressor.release_ms = 180.0
+	AudioServer.add_bus_effect(sfx_idx, compressor)
+
 
 func set_heartbeat_state(state: String) -> void:
 	if _heartbeat_state == state:
@@ -214,5 +233,5 @@ func set_heartbeat_state(state: String) -> void:
 				heartbeat_player.volume_db = -40.0
 				heartbeat_player.pitch_scale = 1.55
 				heartbeat_player.play()
-			_heartbeat_tween.tween_property(heartbeat_player, "volume_db", 4.0, 0.3).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+			_heartbeat_tween.tween_property(heartbeat_player, "volume_db", -1.0, 0.3).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
 			_heartbeat_tween.tween_property(heartbeat_player, "pitch_scale", 1.55, 0.3).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)

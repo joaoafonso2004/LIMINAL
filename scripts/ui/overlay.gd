@@ -9,6 +9,8 @@ extends CanvasLayer
 
 const FONT_PATH := "res://assets/fonts/special_elite.ttf"
 const SHADER_PATH := "res://assets/shaders/post_crt_old_tv.gdshader"
+const TV_STATIC_SHADER_PATH := "res://assets/shaders/tv_static.gdshader"
+const TV_STATIC_AUDIO_PATH := "res://assets/audio/sfx/environment/tv_static_5s.ogg"
 
 # --- Node refs ---
 var _fx: ColorRect
@@ -16,6 +18,7 @@ var _fade: ColorRect
 var _ending: Label
 var _jumpscare: TextureRect
 var _mat: ShaderMaterial
+var _jumpscare_tweens: Array[Tween] = []
 
 # --- Dread state (target + current, smoothly approached) ---
 var _dread_target := 0.0
@@ -204,9 +207,41 @@ func clear_ending() -> void:
 		tw2.tween_property(_fade, "color", clear_col, 1.0)
 
 
-func trigger_jumpscare() -> void:
+## Replace the entire signal with analogue snow for an exact duration. This is
+## deliberately a separate full-strength effect rather than an exaggerated
+## dread pulse, so gameplay CRT tuning remains untouched.
+func play_tv_static(duration: float = 5.0) -> void:
+	var static_rect := ColorRect.new()
+	static_rect.name = "TVStatic"
+	static_rect.color = Color.WHITE
+	static_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	if ResourceLoader.exists(TV_STATIC_SHADER_PATH):
+		var static_material := ShaderMaterial.new()
+		static_material.shader = load(TV_STATIC_SHADER_PATH)
+		static_rect.material = static_material
+	add_child(static_rect)
+	static_rect.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+
+	var hiss := AudioStreamPlayer.new()
+	if ResourceLoader.exists(TV_STATIC_AUDIO_PATH):
+		hiss.stream = load(TV_STATIC_AUDIO_PATH)
+		hiss.bus = "SFX"
+		hiss.volume_db = -6.0
+		add_child(hiss)
+		hiss.play()
+
+	await get_tree().create_timer(maxf(duration, 0.0)).timeout
+	if is_instance_valid(hiss):
+		hiss.stop()
+		hiss.queue_free()
+	if is_instance_valid(static_rect):
+		static_rect.queue_free()
+
+
+func trigger_jumpscare(auto_hide_after: float = 3.0) -> void:
 	if not is_instance_valid(_jumpscare):
 		return
+	_kill_jumpscare_tweens()
 	var img_path := "res://assets/characters/jumpscare.png"
 	if ResourceLoader.exists(img_path):
 		_jumpscare.texture = load(img_path)
@@ -230,19 +265,55 @@ func trigger_jumpscare() -> void:
 			AudioManager.play_sfx(scream_stream, 6.0, 1.1)
 	
 	var tw := create_tween()
+	_jumpscare_tweens.append(tw)
 	tw.set_parallel(true)
 	tw.tween_property(_jumpscare, "scale", Vector2(1.3, 1.3), 0.3).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
 	tw.tween_property(_jumpscare, "modulate", Color(1.3, 0.1, 0.1, 1.0), 0.2)
 	
 	# Violent high-frequency shake
 	var shake_tw := create_tween()
+	_jumpscare_tweens.append(shake_tw)
 	shake_tw.set_loops(12)
 	var shake_offset := 35.0
 	shake_tw.tween_property(_jumpscare, "position", Vector2(randf_range(-shake_offset, shake_offset), randf_range(-shake_offset, shake_offset)), 0.05)
 	
 	# Settle after shaking — image stays on screen, tinted red until death menu covers it
 	var tw2 := create_tween()
+	_jumpscare_tweens.append(tw2)
 	tw2.tween_interval(0.7)
 	tw2.tween_property(_jumpscare, "position", Vector2.ZERO, 0.15)
 	tw2.tween_property(_jumpscare, "modulate", Color(0.6, 0.0, 0.0, 1.0), 0.5)
+	if auto_hide_after > 0.0:
+		var hide_tw := create_tween()
+		_jumpscare_tweens.append(hide_tw)
+		var fade_duration := minf(0.25, auto_hide_after)
+		hide_tw.tween_interval(maxf(0.0, auto_hide_after - fade_duration))
+		hide_tw.tween_property(_jumpscare, "modulate:a", 0.0, fade_duration)
+		hide_tw.tween_callback(func() -> void:
+			if is_instance_valid(_jumpscare):
+				_jumpscare.visible = false
+				_jumpscare.position = Vector2.ZERO)
 
+
+## Fade and hide the jumpscare when gameplay resumes after a revive.
+func clear_jumpscare() -> void:
+	if not is_instance_valid(_jumpscare):
+		return
+	_kill_jumpscare_tweens()
+	if not _jumpscare.visible:
+		return
+	var tw := create_tween()
+	_jumpscare_tweens.append(tw)
+	tw.tween_property(_jumpscare, "modulate:a", 0.0, 0.5)
+	tw.tween_callback(func() -> void:
+		if is_instance_valid(_jumpscare):
+			_jumpscare.visible = false
+			_jumpscare.position = Vector2.ZERO
+		_jumpscare_tweens.clear())
+
+
+func _kill_jumpscare_tweens() -> void:
+	for tw in _jumpscare_tweens:
+		if is_instance_valid(tw) and tw.is_running():
+			tw.kill()
+	_jumpscare_tweens.clear()

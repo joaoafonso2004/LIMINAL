@@ -22,6 +22,10 @@ desktop-export/
 # Platform-internal session/state files — NEVER commit (may hold auth state)
 .tesana_storage_state.json
 .engine_turns.json
+.codex/
+
+# Keep the creator's high-bitrate source locally; Godot ships the OGV version.
+assets/video/END.mp4
 
 # OS junk
 .DS_Store

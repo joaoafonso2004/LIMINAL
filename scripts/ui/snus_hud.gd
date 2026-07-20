@@ -39,7 +39,7 @@ func set_count(collected: int, total: int) -> void:
 		return
 	if collected >= total:
 		return  # announce_exit handles the final beat
-	_label.text = "snus  " + str(collected) + " / " + str(total)
+	_label.text = "snus %d/%d" % [collected, total]
 	_flash(3.0)
 
 
@@ -48,6 +48,12 @@ func announce_exit() -> void:
 		return
 	_label.text = "All found.  A way out has opened somewhere deep."
 	_flash(6.0)
+
+func announce(message: String, duration: float = 4.0) -> void:
+	if not is_instance_valid(_label):
+		return
+	_label.text = message
+	_flash(duration)
 
 
 func _flash(hold: float) -> void:

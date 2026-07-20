@@ -2,36 +2,51 @@ extends Control
 ## Reusable options panel: mouse sensitivity, master/music/SFX volume,
 ## fullscreen. Reads and writes the Settings autoload; saves on every commit
 ## (slider release / toggle). Emits `closed` for the host menu to handle.
-## Built entirely in code, styled to match the game's dim-yellow menus.
+## Built entirely in code, using the same matte corporate language as the
+## main and pause menu language.
 
 signal closed
 
-const FONT_PATH := "res://assets/fonts/special_elite.ttf"
-const DIM_YELLOW := Color(0.72, 0.66, 0.42)
-const BRIGHT := Color(0.93, 0.88, 0.66)
+const INK := Color(0.025, 0.028, 0.025, 1.0)
+const PAPER := Color(0.88, 0.86, 0.75, 1.0)
+const MUTED := Color(0.52, 0.52, 0.46, 1.0)
+const SIGNAL := Color(0.78, 0.70, 0.48, 1.0)
 
 var _font: Font = null
 
 
 func _ready() -> void:
-	if ResourceLoader.exists(FONT_PATH):
-		_font = load(FONT_PATH)
+	_font = UIKit.utilitarian_font(400)
 	_build()
 
 
 func _build() -> void:
+	mouse_filter = Control.MOUSE_FILTER_STOP
+	var shade := ColorRect.new()
+	shade.color = Color(0.005, 0.006, 0.005, 0.72)
+	shade.mouse_filter = Control.MOUSE_FILTER_STOP
+	add_child(shade)
+	shade.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+
+	var rail := ColorRect.new()
+	rail.color = INK
+	rail.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(rail)
+	rail.anchor_bottom = 1.0
+	rail.offset_right = 520.0
+	var title := Label.new()
+	title.text = "SETTINGS"
+	title.position = Vector2(70, 84)
+	title.size = Vector2(390, 70)
+	_style(title, 44, PAPER, 800)
+	add_child(title)
+
 	var vb := VBoxContainer.new()
 	add_child(vb)
-	vb.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
-	vb.alignment = BoxContainer.ALIGNMENT_CENTER
-	vb.add_theme_constant_override("separation", 14)
-	vb.custom_minimum_size = Vector2(420, 0)
-
-	var title := Label.new()
-	title.text = "OPTIONS"
-	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_style(title, 30, BRIGHT)
-	vb.add_child(title)
+	vb.position = Vector2(70, 180)
+	vb.size = Vector2(380, 700)
+	vb.alignment = BoxContainer.ALIGNMENT_BEGIN
+	vb.add_theme_constant_override("separation", 12)
 
 	_add_slider(vb, "MOUSE SENSITIVITY", 0.2, 3.0, 0.05,
 		func(): return Settings.mouse_sensitivity,
@@ -49,8 +64,9 @@ func _build() -> void:
 	var fs := CheckButton.new()
 	fs.text = "FULLSCREEN"
 	fs.button_pressed = Settings.fullscreen
-	fs.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	_style(fs, 20, DIM_YELLOW)
+	fs.custom_minimum_size = Vector2(380, 48)
+	fs.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	UIKit.style_brutalist_button(fs, 17)
 	fs.toggled.connect(func(on: bool):
 		Settings.fullscreen = on
 		Settings.apply_fullscreen()
@@ -60,19 +76,24 @@ func _build() -> void:
 	var crt := CheckButton.new()
 	crt.text = "CRT FILTER"
 	crt.button_pressed = Settings.crt_filter
-	crt.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	_style(crt, 20, DIM_YELLOW)
+	crt.custom_minimum_size = Vector2(380, 48)
+	crt.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	UIKit.style_brutalist_button(crt, 17)
 	crt.toggled.connect(func(on: bool):
 		Settings.crt_filter = on
 		Settings.save_settings())
 	vb.add_child(crt)
 
+	var action_gap := Control.new()
+	action_gap.custom_minimum_size.y = 18.0
+	action_gap.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	vb.add_child(action_gap)
+
 	var back := Button.new()
 	back.text = "BACK"
-	back.custom_minimum_size = Vector2(220, 56)
-	back.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	back.focus_mode = Control.FOCUS_NONE
-	_style(back, 24, BRIGHT)
+	back.custom_minimum_size = Vector2(380, 54)
+	back.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	UIKit.style_brutalist_button(back, 18)
 	back.pressed.connect(func():
 		Settings.save_settings()
 		closed.emit())
@@ -82,8 +103,8 @@ func _build() -> void:
 func _add_slider(parent: VBoxContainer, label_text: String, minv: float, maxv: float, step: float, getter: Callable, setter: Callable) -> void:
 	var row_label := Label.new()
 	row_label.text = label_text
-	row_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_style(row_label, 18, DIM_YELLOW)
+	row_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	_style(row_label, 13, MUTED, 500)
 	parent.add_child(row_label)
 
 	var slider := HSlider.new()
@@ -91,9 +112,10 @@ func _add_slider(parent: VBoxContainer, label_text: String, minv: float, maxv: f
 	slider.max_value = maxv
 	slider.step = step
 	slider.value = getter.call()
-	slider.custom_minimum_size = Vector2(380, 24)
-	slider.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	slider.focus_mode = Control.FOCUS_NONE
+	slider.custom_minimum_size = Vector2(380, 28)
+	slider.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	slider.focus_mode = Control.FOCUS_ALL
+	UIKit.style_brutalist_slider(slider)
 	slider.value_changed.connect(func(v: float):
 		setter.call(v)
 		Settings.apply_all())
@@ -102,8 +124,8 @@ func _add_slider(parent: VBoxContainer, label_text: String, minv: float, maxv: f
 	parent.add_child(slider)
 
 
-func _style(c: Control, size: int, col: Color) -> void:
+func _style(c: Control, size: int, col: Color, weight: int = 400) -> void:
 	if _font:
-		c.add_theme_font_override("font", _font)
+		c.add_theme_font_override("font", UIKit.utilitarian_font(weight))
 	c.add_theme_font_size_override("font_size", size)
 	c.add_theme_color_override("font_color", col)
