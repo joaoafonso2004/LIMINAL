@@ -14,7 +14,7 @@ const COOP_WINDOW_SECONDS := 45.0
 const SOLO_CELL := Vector2i(11, -14)
 const COOP_CELLS := [Vector2i(7, -12), Vector2i(13, -12)]
 const EMERGENCY_BUTTON_SCENE := preload("res://assets/props/items/emergency_button.glb")
-const EMERGENCY_BUTTON_SCALE := 0.36
+const EMERGENCY_BUTTON_HEIGHT := 0.72
 const LEVER_ANIMATION := &"Po_Bo|Level_Down"
 
 var _player: Node3D
@@ -166,25 +166,123 @@ func _spawn_station(station_id: int, cell: Vector2i) -> void:
 	var root := Node3D.new()
 	root.name = "ExtractionOverride_%d" % (station_id + 1)
 	add_child(root)
-	var mount: Dictionary = _maze.wall_mount_near(cell, 0.95) if _maze and _maze.has_method("wall_mount_near") else {}
-	if mount.is_empty():
-		root.position = Vector3(cell.x * CELL, 0.95, cell.y * CELL)
-	else:
+	var mount: Dictionary = _maze.wall_mount_near(cell, 1.25) if _maze and _maze.has_method("wall_mount_near") else {}
+	if mount.is_empty() and is_instance_valid(_maze) and _maze.has_method("wall_mount_near"):
+		for r in range(1, 18):
+			for dx in range(-r, r + 1):
+				for dz in range(-r, r + 1):
+					mount = _maze.wall_mount_near(cell + Vector2i(dx, dz), 1.25)
+					if not mount.is_empty():
+						break
+				if not mount.is_empty():
+					break
+			if not mount.is_empty():
+				break
+
+	if not mount.is_empty():
 		root.global_position = mount["position"]
 		root.rotation.y = float(mount["rotation_y"])
+	else:
+		root.position = Vector3(cell.x * CELL, 1.25, cell.y * CELL)
 
 	var model := EMERGENCY_BUTTON_SCENE.instantiate() as Node3D
 	if model:
 		model.name = "EmergencyButtonModel"
-		model.scale = Vector3.ONE * EMERGENCY_BUTTON_SCALE
 		root.add_child(model)
+		# Mounted as a clean vertical wall panel box.
+		model.rotation_degrees = Vector3.ZERO
+		ModelUtils.scale_to_height(model, 0.62)
+		_center_model_on_mount(root, model)
+		_add_station_collision(root, model)
 		_set_lever_rest_pose(model)
+	_add_status_indicator(root)
 	_stations.append(root)
+
+func _model_bounds_in_root(root: Node3D, model: Node3D) -> AABB:
+	var bounds := AABB()
+	var first := true
+	for child in model.find_children("*", "MeshInstance3D", true, false):
+		var mesh_instance := child as MeshInstance3D
+		if not mesh_instance or not mesh_instance.mesh:
+			continue
+		var relative := root.global_transform.affine_inverse() * mesh_instance.global_transform
+		var transformed := relative * mesh_instance.get_aabb()
+		bounds = transformed if first else bounds.merge(transformed)
+		first = false
+	return bounds
+
+func _center_model_on_mount(root: Node3D, model: Node3D) -> void:
+	var bounds := _model_bounds_in_root(root, model)
+	if bounds.size.length_squared() <= 0.0001:
+		return
+	model.position -= bounds.get_center()
+	# `wall_mount_near()` places the station origin on the visible wall face and
+	# local +Z points into the corridor. Keep the complete casing in front of
+	# that face instead of burying half of it inside the wall.
+	model.position.z += bounds.size.z * 0.5 + 0.004
+
+func _add_station_collision(root: Node3D, model: Node3D) -> void:
+	var bounds := _model_bounds_in_root(root, model)
+	if bounds.size.length_squared() <= 0.0001:
+		return
+	var body := StaticBody3D.new()
+	body.name = "EmergencyButtonCollision"
+	body.collision_layer = 1
+	body.collision_mask = 0
+	var shape_node := CollisionShape3D.new()
+	var shape := BoxShape3D.new()
+	shape.size = Vector3(
+		maxf(bounds.size.x, 0.28),
+		maxf(bounds.size.y, 0.55),
+		maxf(bounds.size.z, 0.14))
+	shape_node.shape = shape
+	shape_node.position = bounds.get_center()
+	body.add_child(shape_node)
+	root.add_child(body)
+
+func _add_status_indicator(root: Node3D) -> void:
+	var lamp := MeshInstance3D.new()
+	lamp.name = "StatusLamp"
+	var sphere := SphereMesh.new()
+	sphere.radius = 0.022
+	sphere.height = 0.044
+	lamp.mesh = sphere
+	lamp.position = Vector3(0.0, 0.24, 0.18)
+	lamp.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	var material := StandardMaterial3D.new()
+	material.albedo_color = Color(0.72, 0.035, 0.02)
+	material.emission_enabled = true
+	material.emission = Color(1.0, 0.015, 0.005)
+	material.emission_energy_multiplier = 1.6
+	lamp.material_override = material
+	root.add_child(lamp)
+	var light := OmniLight3D.new()
+	light.name = "StatusGlow"
+	light.light_color = Color(1.0, 0.04, 0.015)
+	light.light_energy = 0.14
+	light.omni_range = 2.6
+	light.shadow_enabled = false
+	light.position = lamp.position + Vector3(0.0, 0.0, 0.08)
+	root.add_child(light)
+	root.set_meta("status_material", material)
+	root.set_meta("status_light", light)
+
+func _set_indicator_armed(station: Node3D, armed: bool) -> void:
+	var material := station.get_meta("status_material", null) as StandardMaterial3D
+	var light := station.get_meta("status_light", null) as OmniLight3D
+	var color := Color(0.04, 1.0, 0.16) if armed else Color(1.0, 0.04, 0.015)
+	if material:
+		material.albedo_color = color.darkened(0.2)
+		material.emission = color
+	if light:
+		light.light_color = color
+		light.light_energy = 0.28 if armed else 0.14
 
 func _set_station_visual(station_id: int, armed: bool) -> void:
 	if station_id < 0 or station_id >= _stations.size():
 		return
 	var station := _stations[station_id]
+	_set_indicator_armed(station, armed)
 	var model := station.get_node_or_null("EmergencyButtonModel") as Node3D
 	if not model:
 		return

@@ -43,10 +43,10 @@ const PHONE_RADAR_PING_MAX_GAP := 3.8
 # Co-op reunion and communication
 # ---------------------------------------------------------------------------
 const COOP_CALLOUT_COOLDOWN := 10.0
-const COOP_CALLOUT_HEARING_RANGE := 32.0
-const COOP_DOWNED_CALLOUT_HEARING_RANGE := 56.0
-const COOP_CALLOUT_ENTITY_RANGE := 20.0
-const COOP_CALLOUT_VOLUME_DB := -11.0
+const COOP_CALLOUT_HEARING_RANGE := 75.0
+const COOP_DOWNED_CALLOUT_HEARING_RANGE := 85.0
+const COOP_CALLOUT_ENTITY_RANGE := 28.0
+const COOP_CALLOUT_VOLUME_DB := 2.0
 const SOLO_SPAWN_MIN_CELLS := 2
 const SOLO_SPAWN_MAX_CELLS := 5
 const COOP_SPAWN_MIN_CELLS := 6
@@ -81,6 +81,9 @@ const PEEK_VANISH_DIST := 3.5           # closer than this → gone before it's 
 const PEEK_MUFFLE_DIST := 8.0           # near-but-unseen → hum drops, world muffles
 const PEEK_GAP_EARLY := 32.0            # watchers stay unsettling, not repetitive
 const PEEK_GAP_LATE := 26.0             # late-game pressure rises without peek spam
+const PEEK_HOLD_MIN := 2.0               # enough to register, never a prolonged stare
+const PEEK_HOLD_MAX := 3.0
+const PEEK_HARD_TIMEOUT := 3.8           # absolute cleanup even if gaze/lean logic fails
 
 # ---------------------------------------------------------------------------
 # Vultos — jumpscare
@@ -130,8 +133,16 @@ const SOUND_GAP_MAX := 40.0
 # ---------------------------------------------------------------------------
 # Maze look & layout (STATIC — same for every client and every revisit)
 # ---------------------------------------------------------------------------
-const WALL_DENSITY := 0.22              # fraction of cell edges with wall slabs
-const PILLAR_DENSITY := 0.3             # fraction of cell corners with columns
+# Level 0 is "randomly segmented": clusters of enclosed rooms joined by open,
+# pillared halls — not a uniform openness, not a tight maze. A low-frequency
+# region field varies wall density between HALL (open) and ROOM (enclosed) so
+# the map reads segmented. Still a pure function of coords → co-op stays synced.
+const WALL_DENSITY := 0.22              # legacy uniform value (kept for reference)
+const WALL_DENSITY_HALL := 0.2         # open pillared halls — few walls
+const WALL_DENSITY_ROOM := 0.52        # enclosed room clusters — many walls
+const REGION_SIZE := 5                 # cells per region (~20 m zones)
+const ROOM_ZONE_BIAS := 0.52           # fraction of the map that is room clusters
+const PILLAR_DENSITY := 0.3            # base column chance (concentrated in halls)
 const LIT_THRESHOLD := 0.20             # lower threshold → more light panels
 const DARK_ZONE_CHANCE := 0.24          # open cells that stay genuinely dark
 const ANOMALY_CHANCE := 0.015           # wrong-chair / off-hook-phone rooms

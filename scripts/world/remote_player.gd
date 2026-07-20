@@ -29,10 +29,10 @@ var _step_distance := 0.0
 var _step_stream: AudioStream = null
 
 const PLAYER_TINTS := [
-	Color(0.72, 0.58, 0.34),
-	Color(0.34, 0.52, 0.68),
-	Color(0.48, 0.66, 0.42),
-	Color(0.62, 0.38, 0.46),
+	Color(0.95, 0.76, 0.34),
+	Color(0.38, 0.72, 1.0),
+	Color(0.48, 0.92, 0.48),
+	Color(0.95, 0.46, 0.66),
 ]
 
 
@@ -70,11 +70,23 @@ func _ready() -> void:
 func set_downed(v: bool) -> void:
 	is_downed = v
 	if is_instance_valid(_mesh_root):
-		var tw := create_tween()
+		var tw := create_tween().set_parallel(true).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
 		if v:
-			tw.tween_property(_mesh_root, "rotation:x", -PI * 0.45, 0.35)
+			tw.tween_property(_mesh_root, "position:y", 0.06, 0.45)
+			tw.tween_property(_mesh_root, "rotation:x", -1.42, 0.45)
+			tw.tween_property(_mesh_root, "rotation:z", 0.42, 0.45)
+			tw.tween_property(_mesh_root, "rotation:y", 0.28, 0.45)
+			tw.tween_property(_mesh_root, "scale", Vector3(1.0, 0.58, 1.0), 0.45)
+			if is_instance_valid(_anim_player):
+				_anim_player.pause()
 		else:
+			tw.tween_property(_mesh_root, "position:y", 0.0, 0.35)
 			tw.tween_property(_mesh_root, "rotation:x", 0.0, 0.35)
+			tw.tween_property(_mesh_root, "rotation:z", 0.0, 0.35)
+			tw.tween_property(_mesh_root, "rotation:y", 0.0, 0.35)
+			tw.tween_property(_mesh_root, "scale", Vector3.ONE, 0.35)
+			if is_instance_valid(_anim_player):
+				_anim_player.play(_cur_clip)
 
 
 ## Load and instance the survivor GLB, or null if unavailable.
@@ -114,7 +126,8 @@ func _setup_model(model: Node3D) -> void:
 
 
 func _apply_player_tint(model: Node3D) -> void:
-	var tint: Color = PLAYER_TINTS[posmod(player_id, PLAYER_TINTS.size())]
+	# Keep natural GLB character textures intact so model never renders purple.
+	# Metallic dielectric fix to prevent void black reflections:
 	for child in model.find_children("*", "MeshInstance3D"):
 		var mi := child as MeshInstance3D
 		if mi == null or mi.mesh == null:
@@ -123,9 +136,30 @@ func _apply_player_tint(model: Node3D) -> void:
 			var source := mi.get_active_material(surface)
 			if source is StandardMaterial3D:
 				var mat := (source as StandardMaterial3D).duplicate(true) as StandardMaterial3D
-				mat.albedo_color = mat.albedo_color * tint
+				mat.metallic = 0.0
+				mat.roughness = 0.75
 				mi.set_surface_override_material(surface, mat)
+
+	var tint: Color = PLAYER_TINTS[posmod(player_id, PLAYER_TINTS.size())]
+	_setup_overhead_tag(tint)
 	set_meta("player_tint", tint)
+
+
+func _setup_overhead_tag(tint: Color) -> void:
+	if has_node("OverheadTag"):
+		return
+	var label := Label3D.new()
+	label.name = "OverheadTag"
+	label.text = "P%02d" % (player_id + 1)
+	label.font_size = 32
+	label.pixel_size = 0.003
+	label.position = Vector3(0, 2.05, 0)
+	label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	label.modulate = tint
+	label.outline_render_priority = 10
+	label.outline_size = 8
+	label.outline_modulate = Color(0, 0, 0, 0.9)
+	add_child(label)
 
 
 ## Build a dim capsule so a body is always visible even without the GLB.
@@ -136,10 +170,15 @@ func _build_fallback_body() -> void:
 	mesh.radius = 0.3
 	mi.mesh = mesh
 	var mat := StandardMaterial3D.new()
-	mat.albedo_color = PLAYER_TINTS[posmod(player_id, PLAYER_TINTS.size())] * 0.6
+	var tint: Color = PLAYER_TINTS[posmod(player_id, PLAYER_TINTS.size())]
+	mat.albedo_color = Color(0.85, 0.82, 0.75) # Natural beige clothes fallback
+	mat.metallic = 0.0
+	mat.roughness = 0.8
+	mat.emission_enabled = false
 	mi.material_override = mat
 	mi.position.y = 0.85
 	_mesh_root.add_child(mi)
+	_setup_overhead_tag(tint)
 
 
 ## Apply a network transform update. Snaps on the first update.
@@ -191,7 +230,21 @@ func _process(delta: float) -> void:
 			_step_distance = 0.0
 			_play_remote_step()
 
+	_tick_crouch_posture(delta)
 	_update_animation()
+
+
+func _tick_crouch_posture(delta: float) -> void:
+	if _mesh_root == null or is_downed:
+		return
+	var target_y := -0.45 if _net_crouching else 0.0
+	var target_scale := Vector3(1.08, 0.72, 1.08) if _net_crouching else Vector3.ONE
+	var target_rot_x := 0.22 if _net_crouching else 0.0
+
+	var lerp_speed := 14.0 * delta
+	_mesh_root.position.y = lerpf(_mesh_root.position.y, target_y, lerp_speed)
+	_mesh_root.scale = _mesh_root.scale.lerp(target_scale, lerp_speed)
+	_mesh_root.rotation.x = lerpf(_mesh_root.rotation.x, target_rot_x, lerp_speed)
 
 
 func _update_animation() -> void:

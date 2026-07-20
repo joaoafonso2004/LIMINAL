@@ -57,6 +57,12 @@ func register_player_body(body: Node3D) -> void:
 		_players.append(body)
 
 
+const FORBIDDEN_CELLS: Array[Vector2i] = [
+	Vector2i(-7, 7), Vector2i(9, 4), Vector2i(-11, -7),
+	Vector2i(6, -11), Vector2i(1, 12), Vector2i(12, -3),
+	Vector2i(-4, 13), Vector2i(-12, 3), Vector2i(14, -16),
+]
+
 func _generate_spawn_cells() -> Array[Vector2i]:
 	var cells: Array[Vector2i] = []
 	var rng := RandomNumberGenerator.new()
@@ -76,7 +82,7 @@ func _generate_spawn_cells() -> Array[Vector2i]:
 			var c := Vector2i(x, y)
 			if abs(x) <= 2 and abs(y) <= 2:
 				continue
-			if c.distance_squared_to(Vector2i(14, -16)) < 9:
+			if FORBIDDEN_CELLS.has(c):
 				continue
 			var too_close := false
 			for existing in cells:
@@ -205,6 +211,9 @@ func _ensure_tin_material(model: Node3D) -> void:
 		mi.material_override = tin
 
 
+var _last_snus_pickup_time := 0.0
+var _hint_cooldown := 180.0   # 3 minutes without finding a Snus tin
+
 func _process(delta: float) -> void:
 	_time += delta
 	# Slow spin only — the tin sits ON the floor, never floats. (The old bob
@@ -216,6 +225,65 @@ func _process(delta: float) -> void:
 			b.rotation.y += delta * 0.9
 			if is_instance_valid(_local_player):
 				b.visible = b.global_position.distance_to(_local_player.global_position) < VISIBLE_RANGE
+
+	# 3-Minute Snus Hint System: If 180 seconds pass without collecting a Snus, give a compass hint!
+	if _collected.size() < TOTAL:
+		if _time - _last_snus_pickup_time >= _hint_cooldown:
+			_last_snus_pickup_time = _time - 60.0  # reset to 60s so next hint arrives in 2 mins if still stuck
+			_emit_snus_hint()
+
+func _emit_snus_hint() -> void:
+	if not is_instance_valid(_local_player):
+		return
+	var nearest_pos := Vector3.ZERO
+	var best_d := 999999.0
+	for id in _boxes:
+		if _collected.has(id):
+			continue
+		var b: Node3D = _boxes[id]
+		if not is_instance_valid(b):
+			continue
+		var d := _local_player.global_position.distance_to(b.global_position)
+		if d < best_d:
+			best_d = d
+			nearest_pos = b.global_position
+
+	if best_d > 900000.0:
+		return
+
+	var dir_name := _get_cardinal_direction(_local_player.global_position, nearest_pos)
+	var hint_msg := "◇ HINT: A faint glint of tin echoes from the %s..." % dir_name
+
+	var hud := get_node_or_null("/root/GameWorld/_snus_ui")
+	if is_instance_valid(hud) and hud.has_method("announce"):
+		hud.announce(hint_msg, 6.0)
+
+	if has_node("/root/AudioManager") and ResourceLoader.exists(PICKUP_SFX):
+		AudioManager.play_sfx(load(PICKUP_SFX), -6.0, 0.75)
+
+func _get_cardinal_direction(from_pos: Vector3, to_pos: Vector3) -> String:
+	var diff := to_pos - from_pos
+	var angle := atan2(-diff.z, diff.x)
+	var deg := rad_to_deg(angle)
+	if deg < 0:
+		deg += 360.0
+
+	if deg >= 337.5 or deg < 22.5:
+		return "EAST"
+	elif deg >= 22.5 and deg < 67.5:
+		return "NORTH-EAST"
+	elif deg >= 67.5 and deg < 112.5:
+		return "NORTH"
+	elif deg >= 112.5 and deg < 157.5:
+		return "NORTH-WEST"
+	elif deg >= 157.5 and deg < 202.5:
+		return "WEST"
+	elif deg >= 202.5 and deg < 247.5:
+		return "SOUTH-WEST"
+	elif deg >= 247.5 and deg < 292.5:
+		return "SOUTH"
+	else:
+		return "SOUTH-EAST"
 
 func _nearest_uncollected(from: Vector3) -> int:
 	var best := -1
@@ -262,6 +330,7 @@ func host_collect_id(id: int, collector_position: Vector3) -> bool:
 func _do_collect(id: int, broadcast: bool) -> void:
 	if _collected.has(id):
 		return
+	_last_snus_pickup_time = _time
 	_collected[id] = true
 	var b = _boxes.get(id)
 	var pickup_position: Vector3 = b.global_position if b and is_instance_valid(b) else Vector3.ZERO

@@ -83,9 +83,13 @@ func _play_music_now(stream: AudioStream, volume_db: float, fade_in: float = 0.0
 	if music_player.playing and music_player.stream == stream:
 		return
 		
-	music_player.stream = stream
 	if stream is AudioStreamMP3:
-		(stream as AudioStreamMP3).loop = true
+		var mp3 := stream as AudioStreamMP3
+		if not mp3.loop:
+			var dup := mp3.duplicate() as AudioStreamMP3
+			dup.loop = true
+			stream = dup
+	music_player.stream = stream
 		
 	if fade_in > 0.0:
 		music_player.volume_db = -40.0
@@ -157,12 +161,22 @@ func play_sfx_3d(parent: Node, stream: AudioStream, world_pos: Vector3, volume_d
 	p.stream = stream
 	p.volume_db = volume_db
 	p.max_distance = max_dist
-	p.unit_size = 6.0
+	p.unit_size = 10.0
+	p.attenuation_model = AudioStreamPlayer3D.ATTENUATION_INVERSE_DISTANCE
 	p.pitch_scale = pitch
 	parent.add_child(p)
 	p.global_position = world_pos
 	p.play()
 	p.finished.connect(p.queue_free)
+	# Safety timeout: guarantee cleanup even if finished signal fails to trigger
+	var length := stream.get_length() if stream.has_method("get_length") else 0.0
+	var timeout := (length / maxf(pitch, 0.1)) + 1.0 if length > 0.0 else 10.0
+	var tree := parent.get_tree()
+	if tree:
+		tree.create_timer(timeout).timeout.connect(func():
+			if is_instance_valid(p):
+				p.queue_free()
+		)
 
 
 func _setup_limiter() -> void:

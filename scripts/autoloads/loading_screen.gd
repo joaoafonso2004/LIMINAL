@@ -72,7 +72,7 @@ const PRELOAD_PATHS: PackedStringArray = [
 	"res://assets/props/decorations/office_door_closed.glb",
 	"res://assets/props/decorations/wet_floor_sign.glb",
 	"res://assets/props/furniture/broken_office_chair.glb",
-	"res://assets/props/items/snus_box.glb",
+	"res://assets/props/items/SNUS.glb",
 ]
 
 # DEFAULT_ACCENT is the fallback bar-fill color when assets/ui/theme.tres
@@ -132,10 +132,9 @@ func _build_ui() -> void:
 	_root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
 
-	# One uninterrupted matte field. The loading screen communicates only
-	# progress; it contains no branding, lore, tips, or percentage copy.
+	# Dark atmospheric field for tension.
 	var bg := ColorRect.new()
-	bg.color = Color(0.59, 0.56, 0.43, 1.0)
+	bg.color = Color(0.05, 0.05, 0.06, 1.0)
 	_root.add_child(bg)
 	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 
@@ -156,9 +155,9 @@ func _build_ui() -> void:
 	_progress.offset_top = -1.0
 	_progress.offset_bottom = 1.0
 	var pb_bg := StyleBoxFlat.new()
-	pb_bg.bg_color = Color(0.39, 0.37, 0.29, 1.0)
+	pb_bg.bg_color = Color(0.15, 0.15, 0.17, 1.0)
 	var pb_fill := StyleBoxFlat.new()
-	pb_fill.bg_color = Color(0.025, 0.028, 0.025, 1.0)
+	pb_fill.bg_color = Color(0.85, 0.70, 0.40, 1.0)
 	_progress.add_theme_stylebox_override("background", pb_bg)
 	_progress.add_theme_stylebox_override("fill", pb_fill)
 
@@ -182,9 +181,17 @@ func set_progress(p: float) -> void:
 # Heavy first-time warm-up. Honors a min_display floor so quick loads
 # still show the screen long enough for the player to read.
 func preload_and_change_scene(scene_path: String, min_display: float = 1.5) -> void:
-	if _busy: return
+	if _busy:
+		_hide()
+		_busy = false
 	_busy = true
 	_show()
+	var tree := get_tree()
+	if tree:
+		tree.create_timer(3.2).timeout.connect(func():
+			_hide()
+			_busy = false
+		)
 	var t0 := Time.get_ticks_msec()
 	await get_tree().process_frame
 	await get_tree().process_frame  # double-frame render guarantee
@@ -203,9 +210,17 @@ func preload_and_change_scene(scene_path: String, min_display: float = 1.5) -> v
 # Fast subsequent transition. Uses the cached PackedScene if it was
 # warmed in the first preload pass; otherwise falls back to a fresh load.
 func change_scene(scene_path: String, min_display: float = 0.6) -> void:
-	if _busy: return
+	if _busy:
+		_hide()
+		_busy = false
 	_busy = true
 	_show()
+	var tree := get_tree()
+	if tree:
+		tree.create_timer(3.2).timeout.connect(func():
+			_hide()
+			_busy = false
+		)
 	var t0 := Time.get_ticks_msec()
 	await get_tree().process_frame
 	await get_tree().process_frame

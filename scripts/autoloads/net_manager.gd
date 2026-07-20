@@ -144,6 +144,10 @@ func _process(delta: float) -> void:
 					_joined_ok = true
 					local_player_id = msg.get("player_id", 0)
 					connected_players = msg.get("total", 1)
+					if msg.has("max_players"):
+						max_players = int(msg.get("max_players", max_players))
+					elif msg.has("max"):
+						max_players = int(msg.get("max", max_players))
 					player_joined.emit(local_player_id, connected_players)
 					if connected_players >= max_players:
 						all_players_joined.emit()

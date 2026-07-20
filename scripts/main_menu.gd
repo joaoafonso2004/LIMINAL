@@ -311,6 +311,12 @@ func _connect_lobby_signals() -> void:
 		NetManager.room_error.connect(_on_room_error)
 	if not NetManager.all_players_joined.is_connected(_on_all_players_joined):
 		NetManager.all_players_joined.connect(_on_all_players_joined, CONNECT_ONE_SHOT)
+	if not NetManager.message_received.is_connected(_on_lobby_net_message):
+		NetManager.message_received.connect(_on_lobby_net_message)
+
+func _on_lobby_net_message(type: String, _msg: Dictionary, _from_player: int) -> void:
+	if type == "start_game":
+		_on_all_players_joined()
 
 
 func _on_room_error(reason: String) -> void:
@@ -343,7 +349,8 @@ func _on_all_players_joined() -> void:
 	_set_status("Everyone's in! Descending into the Backrooms…")
 	if NetManager.is_host:
 		NetManager.send("rules", {"rules": NetManager.run_rules})
-	get_tree().create_timer(1.2).timeout.connect(_start_game)
+		NetManager.send("start_game", {})
+	get_tree().create_timer(0.6).timeout.connect(_start_game)
 
 func _on_rules_preset_selected(index: int) -> void:
 	_custom_rules = NetManager.default_rules()

@@ -70,6 +70,10 @@ var _extraction_interaction_active := false
 var _receiving_shared_content := false
 var _run_seed: int = 1
 var _run_spawn_cells: Array[Vector2i] = []
+var _last_safe_player_position := Vector3.ZERO
+var _safe_position_ready := false
+var _fall_recovery_cooldown := 0.0
+const FALL_RECOVERY_Y := -3.0
 
 # Co-op revive camera: orbit the local body until bleedout expires.
 const DOWNED_CAMERA_RADIUS := 4.2
@@ -103,6 +107,9 @@ func _ready() -> void:
 	_spawn_mimic()
 	_setup_interact_prompt()
 	_setup_ambient()
+	if is_instance_valid(_player):
+		_last_safe_player_position = _player.global_position
+		_safe_position_ready = true
 	if ResourceLoader.exists("res://assets/audio/sfx/enemy/enemy_jumpscare_scream.mp3"):
 		_callout_stream = load("res://assets/audio/sfx/enemy/enemy_jumpscare_scream.mp3")
 	if _is_mp:
@@ -375,6 +382,15 @@ func _spawn_pause() -> void:
 func _on_local_pause_changed(open: bool) -> void:
 	if is_instance_valid(_player) and _player.has_method("set_menu_input_blocked"):
 		_player.set_menu_input_blocked(open)
+	# Co-op can't freeze the world, so a paused player would still be hunted —
+	# and could be caught while reading the menu with a free cursor. Make them
+	# untargetable while the local menu is open (reuses the down/dead pathway).
+	# Guard: never resurrect targeting for a player who is actually down.
+	if _entity and _entity.has_method("set_local_player_targetable"):
+		if open:
+			_entity.set_local_player_targetable(false)
+		elif not _local_is_down:
+			_entity.set_local_player_targetable(true)
 
 func _set_current_mission(text: String, show_now: bool = false) -> void:
 	if _pause and _pause.has_method("set_mission"):
@@ -442,7 +458,11 @@ func _make_loop(path: String, vol: float) -> AudioStreamPlayer:
 	add_child(p)
 	# loop the stream if the importer didn't
 	if p.stream is AudioStreamMP3:
-		(p.stream as AudioStreamMP3).loop = true
+		var mp3 := p.stream as AudioStreamMP3
+		if not mp3.loop:
+			var dup := mp3.duplicate() as AudioStreamMP3
+			dup.loop = true
+			p.stream = dup
 	p.play()
 	p.finished.connect(func(): if is_instance_valid(p): p.play())
 	return p
@@ -451,6 +471,7 @@ func _make_loop(path: String, vol: float) -> AudioStreamPlayer:
 func _process(delta: float) -> void:
 	if _ended:
 		return
+	_tick_out_of_bounds_safety(delta)
 	var t := 0.0
 	if has_node("/root/GameManager"):
 		t = GameManager.run_time
@@ -480,6 +501,22 @@ func _process(delta: float) -> void:
 		_radar_ping_cd -= delta
 		if _radar_ping_cd <= 0.0:
 			_play_radar_ping()
+
+func _tick_out_of_bounds_safety(delta: float) -> void:
+	_fall_recovery_cooldown = maxf(0.0, _fall_recovery_cooldown - delta)
+	if not is_instance_valid(_player) or _local_is_down:
+		return
+	if _player.global_position.y < FALL_RECOVERY_Y:
+		if _safe_position_ready and _fall_recovery_cooldown <= 0.0:
+			_player.global_position = _last_safe_player_position + Vector3.UP * 0.18
+			_player.velocity = Vector3.ZERO
+			_fall_recovery_cooldown = 1.0
+			if _overlay and _overlay.has_method("flash"):
+				_overlay.flash(Color(0.0, 0.0, 0.0, 0.9), 0.18)
+		return
+	if _player.is_on_floor() and _player.global_position.y > -0.45:
+		_last_safe_player_position = _player.global_position
+		_safe_position_ready = true
 
 func _unhandled_input(event: InputEvent) -> void:
 	if not _is_downed:
@@ -792,9 +829,18 @@ func _on_snus_all() -> void:
 	if _snus_done:
 		return
 	_snus_done = true
+	_activate_extraction_objective(true)
+	# Do not rely only on all five pickup packets arriving in order. The host
+	# explicitly announces the next phase so every client activates its own
+	# correctly positioned button models.
+	if _is_mp and NetManager.is_host:
+		NetManager.send("extract_activate", {})
+
+func _activate_extraction_objective(show_now: bool) -> void:
+	_snus_done = true
 	if _extraction and _extraction.has_method("activate"):
 		_extraction.activate()
-	_update_emergency_mission(true)
+	_update_emergency_mission(show_now)
 
 func _update_emergency_mission(show_now: bool = false) -> void:
 	if _extraction and _extraction.has_method("is_ready") and _extraction.is_ready():
@@ -928,8 +974,12 @@ var _dead_spectator := false
 var _spectate_target_id := -1
 var _spectator_canvas: CanvasLayer = null
 var _spectator_label: Label = null
+var _restart_votes: Dictionary = {}
+var _try_again_button: Button = null
 
 func _on_net_message(type: String, msg: Dictionary, from_player: int) -> void:
+	if not is_inside_tree():
+		return
 	var sender_id := _resolve_sender_id(msg, from_player)
 	match type:
 		"pos":
@@ -975,6 +1025,9 @@ func _on_net_message(type: String, msg: Dictionary, from_player: int) -> void:
 			if _extraction and _extraction.has_method("remote_activate"):
 				_extraction.remote_activate(int(msg.get("id", -1)))
 				_update_emergency_mission(true)
+		"extract_activate":
+			if int(msg.get("from", from_player)) == 0:
+				_activate_extraction_objective(true)
 		"extract_reset":
 			if _extraction and _extraction.has_method("remote_reset"):
 				_extraction.remote_reset()
@@ -1000,6 +1053,15 @@ func _on_net_message(type: String, msg: Dictionary, from_player: int) -> void:
 			_play_callout(callout_position, sender_id, caller_is_downed)
 			if not caller_is_downed and _entity and _entity.has_method("investigate_noise"):
 				_entity.investigate_noise(callout_position, Tuning.COOP_CALLOUT_ENTITY_RANGE, "callout")
+		"vote_restart":
+			var voter := _resolve_sender_id(msg, from_player)
+			_restart_votes[voter] = true
+			_update_restart_vote_ui()
+			if _is_mp and NetManager.is_host:
+				_check_all_voted_restart()
+		"start_restart":
+			if has_node("/root/GameManager"):
+				GameManager.restart()
 		"revived":
 			var target_id := int(msg.get("target", -1))
 			if target_id == NetManager.local_player_id:
@@ -1085,6 +1147,7 @@ func _local_down() -> void:
 		_spawn_local_downed_body()
 		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 		_setup_downed_hud()
+		_check_all_down()
 	else:
 		# Singleplayer: instant death
 		_local_is_down = true
@@ -1274,17 +1337,27 @@ func _tick_dead_spectator(delta: float) -> void:
 	else:
 		set_meta("spectate_right_latched", false)
 
-	var target = _remote_players.get(_spectate_target_id)
+	var target: Node3D = _remote_players.get(_spectate_target_id) as Node3D
 	if not is_instance_valid(target) or _remote_down.has(_spectate_target_id):
 		_cycle_spectator(1)
-		target = _remote_players.get(_spectate_target_id)
+		target = _remote_players.get(_spectate_target_id) as Node3D
 	if not is_instance_valid(target):
 		return
-	var desired_basis := Basis(Vector3.UP, target.rotation.y)
-	var desired_origin: Vector3 = target.global_position + Vector3.UP * 1.62
-	desired_origin += target.global_transform.basis.z * 0.28
-	var desired := Transform3D(desired_basis, desired_origin)
-	_camera.global_transform = _camera.global_transform.interpolate_with(desired, clampf(delta * 9.0, 0.0, 1.0))
+
+	# Smooth 3rd-person over-the-shoulder follow camera with wall raycast collision
+	var head_pos: Vector3 = target.global_position + Vector3.UP * 1.68
+	var cam_offset: Vector3 = (target.global_transform.basis.z * 1.85) + (target.global_transform.basis.x * 0.36) + (Vector3.UP * 0.12)
+	var ideal_pos: Vector3 = head_pos + cam_offset
+
+	var space := get_world_3d().direct_space_state
+	var query := PhysicsRayQueryParameters3D.create(head_pos, ideal_pos, 1)
+	query.exclude = [target]
+	var hit := space.intersect_ray(query)
+	var final_pos: Vector3 = (hit["position"] - cam_offset.normalized() * 0.15) if not hit.is_empty() else ideal_pos
+
+	var desired_basis := Transform3D().looking_at(head_pos - final_pos, Vector3.UP).basis
+	var desired := Transform3D(desired_basis, final_pos)
+	_camera.global_transform = _camera.global_transform.interpolate_with(desired, clampf(delta * 12.0, 0.0, 1.0))
 
 func _on_local_revived() -> void:
 	_is_downed = false
@@ -1360,23 +1433,43 @@ func net_send(type: String, data: Dictionary) -> void:
 ## Players still standing — the host's scare director picks targets from this.
 func alive_player_ids() -> Array:
 	var ids: Array = []
-	if not _local_is_down and has_node("/root/NetManager"):
+	if not _local_is_down and not _is_downed and has_node("/root/NetManager"):
 		ids.append(NetManager.local_player_id)
-	for pid in _remote_players.keys():
+	var total_connected := NetManager.connected_players if has_node("/root/NetManager") and NetManager.connected_players > 0 else 1
+	for pid in range(total_connected):
+		if pid == NetManager.local_player_id:
+			continue
 		if not _remote_down.has(pid):
 			ids.append(int(pid))
 	return ids
 
 ## Every client runs this on the same shared facts (down + disconnect events).
-## When no one is left standing, the run ends for everyone — no eternal
-## spectator softlock.
+## When no one is left standing, the run ends for everyone — no eternal spectator softlock.
 func _check_all_down() -> void:
-	if _ended or not _is_mp or not _local_is_down:
+	if _ended:
 		return
-	for pid in _remote_players.keys():
+	if not _is_mp:
+		if _is_downed or _local_is_down:
+			_end_run("caught")
+		return
+
+	var total_connected := NetManager.connected_players if has_node("/root/NetManager") and NetManager.connected_players > 0 else 1
+	var standing_count := 0
+
+	# Local player standing?
+	if not _is_downed and not _local_is_down:
+		standing_count += 1
+
+	# Remote connected players standing?
+	for pid in range(total_connected):
+		if pid == NetManager.local_player_id:
+			continue
 		if not _remote_down.has(pid):
-			return  # someone is still on their feet
-	_end_run("caught")
+			standing_count += 1
+
+	# If 0 connected players are standing (everyone is downed or dead), end the run immediately!
+	if standing_count <= 0:
+		_end_run("caught")
 
 # ---------------------------------------------------------------------------
 # Endings
@@ -1450,10 +1543,13 @@ func _show_death_menu() -> void:
 	if ResourceLoader.exists("res://assets/fonts/special_elite.ttf"):
 		font = load("res://assets/fonts/special_elite.ttf")
 
+	var try_again_text := "TRY AGAIN"
+	if _is_mp and has_node("/root/NetManager"):
+		var target_count := NetManager.connected_players if NetManager.connected_players > 0 else 1
+		try_again_text = "TRY AGAIN (0/%d READY)" % target_count
+
 	var entries: Array = [
-		["TRY AGAIN", func():
-			if has_node("/root/GameManager"):
-				GameManager.restart()],
+		[try_again_text, _on_try_again_pressed],
 		["MAIN MENU", func():
 			if has_node("/root/GameManager"):
 				GameManager.to_menu()],
@@ -1461,7 +1557,8 @@ func _show_death_menu() -> void:
 	if not OS.has_feature("web"):
 		entries.append(["QUIT", func(): get_tree().quit()])
 
-	for e in entries:
+	for idx in entries.size():
+		var e: Array = entries[idx]
 		var b := Button.new()
 		b.text = e[0]
 		b.custom_minimum_size = Vector2(280, 62)
@@ -1470,6 +1567,35 @@ func _show_death_menu() -> void:
 		UIKit.style_button(b, font, 24)
 		b.pressed.connect(e[1])
 		vb.add_child(b)
+		if idx == 0:
+			_try_again_button = b
+			_update_restart_vote_ui()
+
+func _update_restart_vote_ui() -> void:
+	if is_instance_valid(_try_again_button) and _is_mp:
+		var target_count := NetManager.connected_players if has_node("/root/NetManager") and NetManager.connected_players > 0 else 1
+		_try_again_button.text = "TRY AGAIN (%d/%d READY)" % [_restart_votes.size(), target_count]
+
+func _check_all_voted_restart() -> void:
+	if not _is_mp or not NetManager.is_host:
+		return
+	var target_count := NetManager.connected_players if has_node("/root/NetManager") and NetManager.connected_players > 0 else 1
+	if _restart_votes.size() >= target_count:
+		NetManager.send("start_restart", {})
+		if has_node("/root/GameManager"):
+			GameManager.restart()
+
+func _on_try_again_pressed() -> void:
+	if not _is_mp:
+		if has_node("/root/GameManager"):
+			GameManager.restart()
+	else:
+		var local_id := NetManager.local_player_id if has_node("/root/NetManager") else 0
+		_restart_votes[local_id] = true
+		NetManager.send("vote_restart", {})
+		_update_restart_vote_ui()
+		if NetManager.is_host:
+			_check_all_voted_restart()
 
 func _ending_exit() -> void:
 	_prepare_exit_cinematic()
@@ -1847,23 +1973,24 @@ func _update_interact_prompt(delta: float) -> void:
 		
 	var target_text := ""
 	var in_range := false
-	if _extraction and _extraction.has_method("prompt"):
+	# 1. Check SNUS proximity (HIGHEST PRIORITY)
+	if not in_range and _snus and _snus.has_method("is_snus_in_range"):
+		if _snus.is_snus_in_range(_player.global_position):
+			target_text = "[E] GRAB SNUS"
+			in_range = true
+
+	# 2. Check Extraction terminal
+	if not in_range and _extraction and _extraction.has_method("prompt"):
 		var extraction_prompt := str(_extraction.prompt(_player.global_position))
 		if extraction_prompt != "":
 			target_text = extraction_prompt
 			in_range = true
 
-	# Optional world content has explicit hold/progress interactions.
+	# 3. Optional world content (notes, pamphlets)
 	if not in_range and _content and _content.has_method("prompt"):
 		var content_prompt := str(_content.prompt(_player.global_position))
 		if content_prompt != "":
 			target_text = content_prompt
-			in_range = true
-	
-	# 1. Check SNUS proximity
-	if not in_range and _snus and _snus.has_method("is_snus_in_range"):
-		if _snus.is_snus_in_range(_player.global_position):
-			target_text = "[E] GRAB SNUS"
 			in_range = true
 			
 	# 2. Check Telephone proximity (if SNUS isn't already taking priority)

@@ -60,7 +60,6 @@ func setup(player: Node3D, maze: Node3D) -> void:
 func _ready() -> void:
 	if ResourceLoader.exists(HAND_FONT_PATH):
 		_handwriting = load(HAND_FONT_PATH)
-	_spawn_breaker()
 	_spawn_pamphlets()
 	if not has_node("/root/GameManager") or not GameManager.cassette_found:
 		_spawn_cassette()
@@ -186,37 +185,7 @@ func _spawn_cassette() -> void:
 	_cassette.add_child(glow)
 
 func _spawn_breaker() -> void:
-	_breaker = Node3D.new()
-	_breaker.name = "OptionalPowerBreaker"
-	add_child(_breaker)
-	var mount: Dictionary = _maze.wall_mount_near(BREAKER_CELL, 1.3) if _maze and _maze.has_method("wall_mount_near") else {}
-	if not mount.is_empty():
-		_breaker.global_position = mount["position"]
-		_breaker.rotation.y = float(mount["rotation_y"])
-	else:
-		_breaker.global_position = _world(BREAKER_CELL) + Vector3(0, 1.3, 0)
-	var box := MeshInstance3D.new()
-	var mesh := BoxMesh.new()
-	mesh.size = Vector3(0.65, 0.95, 0.18)
-	box.mesh = mesh
-	var mat := StandardMaterial3D.new()
-	mat.albedo_color = Color(0.18, 0.17, 0.13)
-	mat.roughness = 0.9
-	box.material_override = mat
-	# With the mount itself 2 mm off the wall, centring this 18 cm-deep box
-	# at 9 cm makes its back sit flush against that mount plane.
-	box.position.z = 0.09
-	_breaker.add_child(box)
-	var label := Label3D.new()
-	label.name = "Status"
-	label.text = "AUX POWER\nOFFLINE"
-	label.font_size = 34
-	label.pixel_size = 0.003
-	label.position = Vector3(0, 0, 0.184)
-	label.modulate = Color(0.75, 0.24, 0.15)
-	if _handwriting:
-		label.font = _handwriting
-	_breaker.add_child(label)
+	pass
 
 func _spawn_pamphlets() -> void:
 	for index in PAMPHLETS.size():

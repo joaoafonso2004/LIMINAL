@@ -21,6 +21,10 @@ const FREE_RADIUS: int = 14         # cells beyond this are released (bumps salt
 const LIGHT_RADIUS: int = 4
 # Look/layout knobs live in scripts/tuning.gd — edit there, not here.
 const WALL_DENSITY: float = Tuning.WALL_DENSITY
+const WALL_DENSITY_HALL: float = Tuning.WALL_DENSITY_HALL
+const WALL_DENSITY_ROOM: float = Tuning.WALL_DENSITY_ROOM
+const REGION_SIZE: int = Tuning.REGION_SIZE
+const ROOM_ZONE_BIAS: float = Tuning.ROOM_ZONE_BIAS
 const PILLAR_DENSITY: float = Tuning.PILLAR_DENSITY
 const WALL_H: float = 3.0
 const WALL_HALF_THICKNESS: float = 0.175
@@ -233,7 +237,28 @@ func _wall_present(owner: Vector2i, dir: int) -> bool:
 		return true
 
 	var h := _hash3(owner.x, owner.y, dir * 131 + _salt_of(owner) * 977)
-	return h < WALL_DENSITY
+	return h < _local_wall_density(owner)
+
+## Wall density for the region this cell sits in. A low-frequency field carves
+## the map into room clusters (dense) and open pillared halls (sparse), giving
+## the "randomly segmented" Level 0 feel instead of a uniform openness. Pure
+## function of coords, so every co-op client agrees.
+func _local_wall_density(owner: Vector2i) -> float:
+	var rx := int(floor(float(owner.x) / float(REGION_SIZE)))
+	var ry := int(floor(float(owner.y) / float(REGION_SIZE)))
+	var field := _hash3(rx, ry, 909)
+	if field >= ROOM_ZONE_BIAS:
+		return WALL_DENSITY_HALL            # open pillared hall
+	# room cluster: ramp from hall density at the zone edge up to full ROOM
+	# density in the deepest room regions, so enclosure varies room to room.
+	var intensity := 1.0 - field / maxf(ROOM_ZONE_BIAS, 0.001)
+	return lerpf(WALL_DENSITY_HALL, WALL_DENSITY_ROOM, intensity)
+
+## True where this cell sits in an open "hall" region (used to cluster pillars).
+func _is_hall_region(c: Vector2i) -> bool:
+	var rx := int(floor(float(c.x) / float(REGION_SIZE)))
+	var ry := int(floor(float(c.y) / float(REGION_SIZE)))
+	return _hash3(rx, ry, 909) >= ROOM_ZONE_BIAS
 
 func _cheb(c: Vector2i) -> int:
 	return max(abs(c.x), abs(c.y))
@@ -280,17 +305,24 @@ func _build_cell(c: Vector2i) -> void:
 		_add_box(root, body, Vector3(0.35, WALL_H, CELL), Vector3(CELL * 0.5, WALL_H * 0.5, 0), wl_mat, true)
 	if _wall_present(c, DIR_N):
 		_add_box(root, body, Vector3(CELL, WALL_H, 0.35), Vector3(0, WALL_H * 0.5, CELL * 0.5), wl_mat, true)
-	# Cap the far boundary so the fog edge isn't fully open where neighbors are missing.
+	# Cap the far boundary so the fog edge isn't fully open where neighbors are
+	# missing. These caps MUST collide: without a hitbox the player walks
+	# straight through the fog-edge slab and falls out of the world. When the
+	# neighbour streams in it builds an identical wall at the same spot, so the
+	# overlap is harmless (same mesh, same collision).
 	var west_owner := Vector2i(c.x - 1, c.y)
 	if not _cells.has(west_owner) and _cheb(c) > START_CLEAR and _wall_present(west_owner, DIR_E):
-		_add_box(root, body, Vector3(0.35, WALL_H, CELL), Vector3(-CELL * 0.5, WALL_H * 0.5, 0), wl_mat, false)
+		_add_box(root, body, Vector3(0.35, WALL_H, CELL), Vector3(-CELL * 0.5, WALL_H * 0.5, 0), wl_mat, true)
 	var south_owner := Vector2i(c.x, c.y - 1)
 	if not _cells.has(south_owner) and _cheb(c) > START_CLEAR and _wall_present(south_owner, DIR_N):
-		_add_box(root, body, Vector3(CELL, WALL_H, 0.35), Vector3(0, WALL_H * 0.5, -CELL * 0.5), wl_mat, false)
+		_add_box(root, body, Vector3(CELL, WALL_H, 0.35), Vector3(0, WALL_H * 0.5, -CELL * 0.5), wl_mat, true)
 
-	# Square pillar at this cell's +X/+Z corner: the open-plan halls of Level 0
-	# are held up by a loose grid of wallpapered columns.
-	if _cheb(c) > START_CLEAR and _hash3(c.x, c.y, 401) < PILLAR_DENSITY:
+	# Square pillar at this cell's +X/+Z corner: the open halls of Level 0 are
+	# held up by loose grids of wallpapered columns. Concentrate them in the
+	# open "hall" regions (denser room clusters have walls instead), so pillars
+	# read as grouped grids rather than scattered evenly.
+	var pillar_chance := PILLAR_DENSITY * (1.6 if _is_hall_region(c) else 0.35)
+	if _cheb(c) > START_CLEAR and _hash3(c.x, c.y, 401) < pillar_chance:
 		_add_box(root, body, Vector3(0.7, WALL_H, 0.7), Vector3(CELL * 0.5, WALL_H * 0.5, CELL * 0.5), wl_mat, true)
 
 	# How open is this cell? (count open edges)

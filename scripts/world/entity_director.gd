@@ -51,6 +51,7 @@ var _figure: Node3D = null
 var _fig_anim: AnimationPlayer = null
 var _peek_recede := false
 var _peek_timer := 0.0
+var _peek_elapsed := 0.0
 # corner-peek: the figure starts BEHIND a wall end and leans out
 var _peek_corner := false
 var _peek_from := Vector3.ZERO         # hidden position (behind cover)
@@ -114,6 +115,12 @@ var _world = null                      # game_world (net relay + alive players)
 var _local_targetable := true          # false while this client is down/dead
 var _net_fig_active := false           # another client's apparition is live
 var _net_fig_watchdog := 0.0           # frees the slot if their scare fizzles
+var _mp_personal_next := INF           # host rotates private scares fairly
+var _mp_personal_cursor := 0
+var _mp_personal_sequence := 0
+var _queued_remote_scare := ""
+var _queued_remote_scare_expires := 0.0
+var _queued_remote_scare_retry_at := 0.0
 var _owns_fig := false
 var _fig_send_timer := 0.0
 var _mirror: Node3D = null
@@ -168,6 +175,8 @@ func setup_mp(world, host: bool) -> void:
 	_world = world
 	_mp = true
 	_mp_host = host
+	if _mp_host:
+		_mp_personal_next = Tuning.PEEK_FIRST_SIGHTING + _rng.randf_range(-3.0, 5.0)
 
 ## Co-op life-cycle gate. A downed/dead player must never keep a locally-owned
 ## entity, receive a scare, or be caught again. The host can still direct the
@@ -179,6 +188,9 @@ func set_local_player_targetable(value: bool) -> void:
 	if value:
 		_catch_in_progress = false
 		return
+	_queued_remote_scare = ""
+	_queued_remote_scare_expires = 0.0
+	_queued_remote_scare_retry_at = 0.0
 
 	_stop_chase_loops()
 	_remove_figure()
@@ -300,6 +312,10 @@ func _physics_process(delta: float) -> void:
 		t = GameManager.run_time
 		looks = GameManager.look_back_count
 	_arm_schedules(t)
+	if _mp and _mp_host:
+		_tick_mp_personal_schedule(t)
+	if _mp and _mode == "idle" and _queued_remote_scare != "":
+		_consume_queued_remote_scare(t)
 	_update_dread(t, looks, delta)
 	_update_random_sounds(t, looks, delta)
 	# crouching calms the body: stress bleeds off ~2.5x faster while low
@@ -319,7 +335,7 @@ func _physics_process(delta: float) -> void:
 
 	# A due jumpscare doesn't queue politely behind a watcher — it interrupts.
 	# (It fires while walking, standing, mid-peek, mid-tail: whenever it's due.)
-	if (_mode == "peek" or _mode == "shadow") and t >= _next_jump and _can_jump(t):
+	if not _mp and (_mode == "peek" or _mode == "shadow") and t >= _next_jump and _can_jump(t):
 		if not _shared_chase_active():
 			_end_apparition()
 			_begin_jump(t)
@@ -357,6 +373,62 @@ func _arm_schedules(t: float) -> void:
 		_next_chase = t + _rng.randf_range(15.0, 60.0)
 	if _next_shadow > 900000.0 and t >= Tuning.SHADOW_ARM_TIME * arm_scale:
 		_next_shadow = t + _rng.randf_range(10.0, 60.0)
+
+func _tick_mp_personal_schedule(t: float) -> void:
+	if t < _mp_personal_next or _world == null or not _world.has_method("alive_player_ids"):
+		return
+	if _shared_chase_active():
+		_mp_personal_next = t + 3.0
+		return
+	var ids: Array = _world.alive_player_ids()
+	if ids.is_empty() or not has_node("/root/NetManager"):
+		_mp_personal_next = t + 5.0
+		return
+	ids.sort()
+	var target := int(ids[_mp_personal_cursor % ids.size()])
+	_mp_personal_cursor += 1
+	var arm_scale := 1.0 - 0.5 * _menace
+	var jump_is_armed := t >= Tuning.JUMP_ARM_TIME * arm_scale
+	var kind := "jump" if jump_is_armed and _mp_personal_sequence % 4 == 3 else "peek"
+	_mp_personal_sequence += 1
+	if target == NetManager.local_player_id:
+		remote_scare(kind)
+	else:
+		_world.net_send("scare", {"kind": kind, "target": target})
+	# One dispatch at a time, round-robin. This keeps each player's private
+	# horror active without firing the same event on every screen at once.
+	var base_gap := clampf(44.0 / float(ids.size()), 11.0, 22.0)
+	_mp_personal_next = t + base_gap * _rng.randf_range(0.88, 1.14)
+
+func _consume_queued_remote_scare(t: float) -> void:
+	if _queued_remote_scare == "":
+		return
+	if t < _queued_remote_scare_retry_at:
+		return
+	if t > _queued_remote_scare_expires:
+		_queued_remote_scare = ""
+		_queued_remote_scare_expires = 0.0
+		_queued_remote_scare_retry_at = 0.0
+		return
+	var kind := _queued_remote_scare
+	_queued_remote_scare = ""
+	_queued_remote_scare_expires = 0.0
+	_queued_remote_scare_retry_at = 0.0
+	_start_personal_scare(kind, t)
+
+func _start_personal_scare(kind: String, t: float) -> void:
+	match kind:
+		"chase":
+			_begin_chase()
+		"jump":
+			if _can_jump(t):
+				_begin_jump(t)
+			else:
+				_begin_peek()
+		"shadow":
+			_begin_shadow()
+		_:
+			_begin_peek()
 
 func _add_stress(v: float) -> void:
 	_stress = clampf(_stress + v, 0.0, 1.0)
@@ -422,8 +494,8 @@ func _maybe_lookback_reveal(t: float, looks: int) -> void:
 	_last_lookback = looks
 	if _mode != "idle" or t < 120.0 or _lookback_cd > 0.0 or _ended:
 		return
-	if _mp and (not _mp_host or _net_fig_active):
-		return  # co-op: the host's schedule owns the entity
+	if _mp:
+		return  # co-op private scares are distributed by the fair host rotation
 	if _rng.randf() > 0.3:
 		return
 	var eye: Vector3 = _camera.global_position
@@ -447,6 +519,7 @@ func _maybe_lookback_reveal(t: float, looks: int) -> void:
 		_peek_corner = false
 		_peek_style = "stare"
 		_stare_timer = -1.0
+		_peek_elapsed = 0.0
 		_peek_witnessed = true
 		_mode = "peek"
 		_peek_recede = false
@@ -529,13 +602,20 @@ func _tick_idle(t: float) -> void:
 	# menace raises the chase cap too (2 → 5 with every tin in hand)
 	if (not _mp or _mp_host) and t >= _next_chase \
 			and _chase_done < Tuning.CHASE_MAX_PER_RUN + int(round(_menace * 3.0)):
-		if _mp and _dispatch_chase():
-			_chase_done += 1
-			_next_chase = t + _rng.randf_range(60.0, 140.0) * lerpf(1.0, 0.55, _menace)
+		if _mp:
+			if _dispatch_chase():
+				_chase_done += 1
+				_next_chase = t + _rng.randf_range(50.0, 110.0) * lerpf(1.0, 0.55, _menace)
 		elif _local_targetable:
 			_begin_chase()
+			_chase_done += 1
+			_next_chase = t + _rng.randf_range(50.0, 110.0) * lerpf(1.0, 0.55, _menace)
 		return
 	if not _local_targetable:
+		return
+	# Private co-op peeks/jumps are delivered by the host's round-robin
+	# scheduler. Clients must not add a second independent random schedule.
+	if _mp:
 		return
 	if t >= _next_jump and _can_jump(t):
 		_begin_jump(t)
@@ -546,6 +626,8 @@ func _tick_idle(t: float) -> void:
 	if t >= _next_peek:
 		_begin_peek()
 		return
+
+var _chase_target_cursor := 0
 
 ## Co-op direction: pick a living player; if it isn't us, hand the scare to
 ## their client (their camera does the validation) and mirror what follows.
@@ -559,9 +641,13 @@ func _dispatch_chase() -> bool:
 	var ids: Array = _world.alive_player_ids()
 	if ids.is_empty():
 		return false
-	var target: int = int(ids[_rng.randi() % ids.size()])
+	ids.sort()
+	_chase_target_cursor += 1
+	var target: int = int(ids[_chase_target_cursor % ids.size()])
 	if target == NetManager.local_player_id:
-		return false
+		if _local_targetable:
+			_begin_chase()
+		return true
 	_world.net_send("scare", {"kind": "chase", "target": target})
 	_net_fig_active = true   # held until their figoff arrives
 	_mirror_mode = "chase"
@@ -603,20 +689,22 @@ func phone_jumpscare() -> void:
 func remote_scare(kind: String) -> void:
 	if _ended or not _local_targetable:
 		return
-	# A host-directed physical chase can replace a personal corner apparition.
-	if kind == "chase" and (_mode == "peek" or _mode == "shadow"):
+	# A scare order (scheduled peeks, jumpscares, or chases) interrupts roaming
+	# or minor apparitions so the host gets its turn in the co-op round-robin.
+	if _mode == "roam":
+		_end_roam()
+	elif (_mode == "peek" or _mode == "shadow") and (kind == "chase" or kind == "jump"):
 		_end_apparition()
 	if _mode != "idle":
+		if _queued_remote_scare == "" or kind == "jump":
+			_queued_remote_scare = kind
+			_queued_remote_scare_expires = _now() + 30.0
+			_queued_remote_scare_retry_at = _now()
 		return
-	match kind:
-		"chase":
-			_begin_chase()
-		"jump":
-			_begin_jump(_now())
-		"shadow":
-			_begin_shadow()
-		_:
-			_begin_peek()
+	if kind == "chase":
+		_begin_chase()
+	else:
+		_start_personal_scare(kind, _now())
 
 func _can_jump(t: float) -> bool:
 	# menace raises the per-run cap (3 → 5) and shrinks the mandatory gap
@@ -649,15 +737,21 @@ func _begin_peek() -> void:
 		_peek_loop_count = 0
 		_peek_wait_timer = 0.0
 		_stare_timer = -1.0
+		_peek_elapsed = 0.0
 		# most watchers hold your gaze a beat before slipping away;
 		# some are gone the instant your eyes land on them
 		_peek_style = "stealth"
-		_peek_timer = _rng.randf_range(5.0, 8.0)
+		_peek_timer = _rng.randf_range(Tuning.PEEK_HOLD_MIN, Tuning.PEEK_HOLD_MAX)
 		_wire_peek_skeleton()
 		return
 	# No arbitrary-wall fallback: if there is no genuine free wall end, wait
 	# and try again instead of risking a figure intersecting a solid wall.
 	_next_peek = _now() + 2.0
+	if _mp and _local_targetable:
+		_queued_remote_scare = "peek"
+		_queued_remote_scare_retry_at = _now() + 2.0
+		if _queued_remote_scare_expires <= _now():
+			_queued_remote_scare_expires = _now() + 14.0
 
 ## Pick a wall-end corner where cover geometry really works from the player's
 ## point of view: leaning out is visible, hiding is not.
@@ -702,6 +796,10 @@ func _tick_peek(delta: float) -> void:
 		_end_apparition()
 		return
 	_peek_timer -= delta
+	_peek_elapsed += delta
+	if _peek_elapsed >= Tuning.PEEK_HARD_TIMEOUT:
+		_end_apparition()
+		return
 
 	var flat := _figure.global_position - _player.global_position
 	flat.y = 0.0
@@ -784,7 +882,7 @@ func _tick_peek(delta: float) -> void:
 
 	if _peek_timer <= 0.0 and not _peek_corner:
 		_end_apparition()
-	elif _peek_timer <= -1.0:
+	elif _peek_timer <= -0.45:
 		_end_apparition()
 	# (bone poses are applied via skeleton_updated — post-animation — not here)
 
@@ -1287,8 +1385,8 @@ func _chase_move(delta: float, dist_to_player: float) -> void:
 			_chase_path.pop_front()
 			if _chase_path.size() >= 2:
 				target = _maze.world_center(_chase_path[1])
-	elif _chase_path.size() == 1 or dist_to_player < 3.0:
-		# same cell as the goal: go straight in
+	elif _chase_path.size() == 1 or (dist_to_player < 3.0 and _fig_sees):
+		# same cell as the goal OR direct sight within 3m: go straight in
 		_path_fail = 0.0
 		target = goal
 	else:
@@ -1311,7 +1409,22 @@ func _chase_move(delta: float, dist_to_player: float) -> void:
 	var step_dir: Vector3 = target - _figure.global_position
 	step_dir.y = 0
 	if step_dir.length() > 0.01:
-		_figure.global_position += step_dir.normalized() * speed * delta
+		var move_dist := speed * delta
+		var wish_dir := step_dir.normalized()
+		var next_pos := _figure.global_position + wish_dir * move_dist
+
+		# Physics-safe wall collision check: if next step hits environment walls, try sliding along axes
+		if not _figure_pose_clear(next_pos):
+			var try_x := _figure.global_position + Vector3(wish_dir.x, 0, 0) * move_dist
+			var try_z := _figure.global_position + Vector3(0, 0, wish_dir.z) * move_dist
+			if _figure_pose_clear(try_x):
+				next_pos = try_x
+			elif _figure_pose_clear(try_z):
+				next_pos = try_z
+			else:
+				next_pos = _figure.global_position # halt at wall surface
+
+		_figure.global_position = next_pos
 		if dist_to_player < 4.0:
 			_face_player(_figure)
 		else:
@@ -1514,6 +1627,10 @@ func _spawn_figure(pos: Vector3, _instant: bool) -> void:
 	_figure = mesh_root
 	_set_figure_alpha(1.0)
 
+## Silhouette materials cached at spawn so the per-frame alpha fades don't walk
+## the whole node tree with find_children() every call (hot path during peeks).
+var _fig_silh_mats: Array[StandardMaterial3D] = []
+
 func _blacken(model: Node3D) -> void:
 	var mat := StandardMaterial3D.new()
 	mat.albedo_color = Color(0.12, 0.12, 0.14)
@@ -1526,6 +1643,9 @@ func _blacken(model: Node3D) -> void:
 		if mi:
 			mi.material_override = mat
 			mi.set_meta("silh_mat", mat)
+	# One shared silhouette material for the whole figure — cache it so the
+	# per-frame alpha fades never call find_children() again.
+	_fig_silh_mats = [mat]
 
 func _play_anim(name: String) -> void:
 	if _fig_anim and _fig_anim.has_animation(name):
@@ -1542,19 +1662,16 @@ func _face_player(fig: Node3D) -> void:
 func _set_figure_alpha(a: float) -> void:
 	if not is_instance_valid(_figure):
 		return
-	for child in _figure.find_children("*", "MeshInstance3D"):
-		var mi := child as MeshInstance3D
-		if mi and mi.has_meta("silh_mat"):
-			var m := mi.get_meta("silh_mat") as StandardMaterial3D
+	for m in _fig_silh_mats:
+		if is_instance_valid(m):
 			m.albedo_color.a = a
 
 func _figure_alpha() -> float:
 	if not is_instance_valid(_figure):
 		return 0.0
-	for child in _figure.find_children("*", "MeshInstance3D"):
-		var mi := child as MeshInstance3D
-		if mi and mi.has_meta("silh_mat"):
-			return (mi.get_meta("silh_mat") as StandardMaterial3D).albedo_color.a
+	for m in _fig_silh_mats:
+		if is_instance_valid(m):
+			return m.albedo_color.a
 	return 1.0
 
 func _fade_figure(delta: float, rate: float) -> void:
@@ -1565,6 +1682,7 @@ func _remove_figure() -> void:
 		_figure.queue_free()
 	_figure = null
 	_fig_anim = null
+	_fig_silh_mats.clear()
 
 func _end_apparition() -> void:
 	# A watcher nobody ever saw was wasted terror — retry sooner next time.
@@ -1586,6 +1704,7 @@ func _end_apparition() -> void:
 	_lean_dir = 1.0
 	_peek_loop_count = 0
 	_peek_wait_timer = 0.0
+	_peek_elapsed = 0.0
 	_stare_timer = -1.0
 	muffle.emit(false)
 	request_flicker.emit(0.0)   # proximity flicker dies with the apparition
