@@ -426,9 +426,9 @@ func _spawn_fp_body() -> void:
 				for i in range(skeleton.get_bone_count()):
 					if is_bone_to_collapse(skeleton, i):
 						var rest := skeleton.get_bone_rest(i)
-						rest.basis = Basis.from_scale(Vector3.ZERO)
+						rest.basis = Basis.from_scale(Vector3(0.0001, 0.0001, 0.0001))
 						skeleton.set_bone_rest(i, rest)
-						skeleton.set_bone_pose_scale(i, Vector3.ZERO)
+						skeleton.set_bone_pose_scale(i, Vector3(0.0001, 0.0001, 0.0001))
 						
 				for anim_name in lib.get_animation_list():
 					var anim := lib.get_animation(anim_name)
@@ -523,7 +523,7 @@ func _update_bone_collapse() -> void:
 		var should_collapse := not is_downed
 		for i in range(skeleton.get_bone_count()):
 			if is_bone_to_collapse(skeleton, i):
-				var scale_val := Vector3.ZERO if should_collapse else Vector3.ONE
+				var scale_val := Vector3(0.0001, 0.0001, 0.0001) if should_collapse else Vector3.ONE
 				skeleton.set_bone_pose_scale(i, scale_val)
 
 
