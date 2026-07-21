@@ -16,6 +16,7 @@ signal sprint_state_changed(active: bool, stamina_ratio: float)
 
 var frozen: bool = false
 var menu_input_blocked: bool = false
+var is_downed: bool = false
 
 const EYE_HEIGHT: float = 1.55
 const BOB_SPEED: float = 7.0
@@ -146,7 +147,13 @@ func _physics_process(delta: float) -> void:
 	var target_eye_height := EYE_HEIGHT
 	var target_mesh_scale_y := 1.0
 
-	if is_crouching:
+	if is_downed:
+		is_crouching = true
+		is_sprinting = false
+		target_speed = 0.85 # Slow crawling speed while downed
+		target_eye_height = 0.35 # Carpet level camera
+		target_mesh_scale_y = 0.38
+	elif is_crouching:
 		target_speed = Tuning.CROUCH_SPEED
 		target_eye_height = 0.85
 		target_mesh_scale_y = 0.62
@@ -450,7 +457,10 @@ func _update_body_animation() -> void:
 		return
 	var horizontal_speed := Vector2(velocity.x, velocity.z).length()
 	var want := "idle"
-	if is_crouching:
+	if is_downed:
+		want = "crawl_down" if horizontal_speed > 0.08 and is_on_floor() else "downed"
+		_anim_player.speed_scale = 1.0
+	elif is_crouching:
 		want = "crouch_walk" if horizontal_speed > 0.3 and is_on_floor() and not frozen else "crouch_idle"
 		_anim_player.speed_scale = 1.0
 	elif horizontal_speed > 0.3 and is_on_floor() and not frozen:
@@ -466,6 +476,9 @@ func _update_body_animation() -> void:
 	if _anim_player.has_animation(want):
 		_anim_player.play(want, 0.2)
 		_cur_clip = want
+	elif want == "crawl_down" and _anim_player.has_animation("crawl"):
+		_anim_player.play("crawl", 0.2)
+		_cur_clip = "crawl"
 	elif _anim_player.has_animation("ual1_Idle"):
 		_anim_player.play("ual1_Idle")
 		_cur_clip = "ual1_Idle"

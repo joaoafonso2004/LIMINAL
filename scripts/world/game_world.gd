@@ -81,6 +81,8 @@ const DOWNED_CAMERA_FOCUS_HEIGHT := 0.62
 var _downed_camera_yaw := 0.0
 var _downed_camera_pitch := 0.52
 var _downed_body_visual: Node3D = null
+var _downed_scream_timer := 0.0
+var _crawl_blood_trail_timer := 0.0
 
 func _ready() -> void:
 	_is_mp = has_node("/root/NetManager") and NetManager.is_multiplayer
@@ -540,14 +542,36 @@ func _unhandled_input(event: InputEvent) -> void:
 func _tick_downed_and_revive(delta: float) -> void:
 	# 1. Downed local player countdown & spectate live teammate
 	if _is_downed:
-		_bleedout_timer -= delta
 		_incoming_revive_timeout = maxf(0.0, _incoming_revive_timeout - delta)
+		if _incoming_revive_timeout > 0.0:
+			# Revive in progress: PAUSE the 30-second bleedout timer!
+			pass
+		else:
+			_bleedout_timer -= delta
+
+		# Periodic pain screams while downed
+		_downed_scream_timer -= delta
+		if _downed_scream_timer <= 0.0:
+			_downed_scream_timer = randf_range(3.5, 5.5)
+			_play_downed_scream()
+
+		# Injured blood trail while crawling (every 3 seconds of movement)
+		if is_instance_valid(_player):
+			var crawl_spd := Vector2(_player.velocity.x, _player.velocity.z).length()
+			if crawl_spd > 0.08:
+				_crawl_blood_trail_timer += delta
+				if _crawl_blood_trail_timer >= 3.0:
+					_crawl_blood_trail_timer = 0.0
+					_spawn_blood_decal(_player.global_position, "res://assets/textures/decals/blood_trail.png", Vector3(1.4, 2.0, 1.4))
+					if _is_mp:
+						NetManager.send("blood_decal", {"type": "trail", "x": _player.global_position.x, "y": _player.global_position.y, "z": _player.global_position.z})
+
 		if is_instance_valid(_downed_status):
 			if _incoming_revive_timeout > 0.0:
 				_downed_status.text = "TEAMMATE IS REVIVING YOU... (%.1fs / 10.0s)" % _incoming_revive_progress
 				_downed_status.add_theme_color_override("font_color", Color(0.2, 0.9, 0.3, 1.0))
 			else:
-				_downed_status.text = "DOWNED — %.1fs LEFT TO REVIVE" % maxf(0.0, _bleedout_timer)
+				_downed_status.text = "DOWNED — %.1fs LEFT TO BLEED OUT" % maxf(0.0, _bleedout_timer)
 				_downed_status.add_theme_color_override("font_color", Color(1.0, 0.3, 0.3, 1.0))
 		if is_instance_valid(_downed_bar):
 			_downed_bar.value = maxf(0.0, _bleedout_timer)
@@ -555,9 +579,13 @@ func _tick_downed_and_revive(delta: float) -> void:
 		_tick_downed_camera(delta)
 			
 		if _bleedout_timer <= 0.0:
-			# Bleedout expired -> permanent out of combat
+			# Bleedout expired after 30s -> PERMANENTLY DEAD, CANNOT BE REVIVED!
 			_is_downed = false
 			_local_is_down = true
+			if is_instance_valid(_player):
+				_player.is_downed = false
+				if _player.has_method("set_frozen"):
+					_player.set_frozen(true)
 			NetManager.send("down", {})
 			if is_instance_valid(_downed_canvas):
 				_downed_canvas.queue_free()
@@ -1036,10 +1064,17 @@ func _on_net_message(type: String, msg: Dictionary, from_player: int) -> void:
 			var rp_d = _remote_players.get(sender_id)
 			if rp_d and is_instance_valid(rp_d) and rp_d.has_method("set_downed"):
 				rp_d.set_downed(true)
+				_spawn_blood_decal(rp_d.global_position, "res://assets/textures/decals/blood_wall_end.png", Vector3(1.8, 2.0, 1.8))
 			if sender_id >= 0:
 				_remote_down[sender_id] = true
 				if _dead_spectator and sender_id == _spectate_target_id:
 					_cycle_spectator(1)
+		"blood_decal":
+			var pos_v := Vector3(float(msg.get("x", 0.0)), float(msg.get("y", 0.0)), float(msg.get("z", 0.0)))
+			var type_str := str(msg.get("type", "trail"))
+			var tex_path := "res://assets/textures/decals/blood_trail.png" if type_str == "trail" else "res://assets/textures/decals/blood_wall_end.png"
+			var sz := Vector3(1.4, 2.0, 1.4) if type_str == "trail" else Vector3(1.8, 2.0, 1.8)
+			_spawn_blood_decal(pos_v, tex_path, sz)
 		"reviving":
 			if int(msg.get("target", -1)) == NetManager.local_player_id and _is_downed:
 				_incoming_revive_progress = clampf(float(msg.get("prog", 0.0)), 0.0, 10.0)
@@ -1136,18 +1171,46 @@ func _local_down() -> void:
 			_enter_dead_spectator()
 			_check_all_down()
 			return
-		# Co-op: enter the configurable Downed Bleedout state so teammates can revive.
+		# Co-op: enter 30-second Downed Bleedout state where player can crawl and scream
 		_is_downed = true
 		_bleedout_timer = float(NetManager.rule("revive_seconds", 30.0))
+		_downed_scream_timer = 0.5
+		_crawl_blood_trail_timer = 0.0
 		NetManager.send("downed", {})
-		if is_instance_valid(_player) and _player.has_method("set_frozen"):
-			_player.set_frozen(true, false)
+		if is_instance_valid(_player):
+			_player.is_downed = true
+			if _player.has_method("set_frozen"):
+				_player.set_frozen(false)
+		_spawn_blood_decal(_player.global_position, "res://assets/textures/decals/blood_wall_end.png", Vector3(1.8, 2.0, 1.8))
+		NetManager.send("blood_decal", {"type": "wall_end", "x": _player.global_position.x, "y": _player.global_position.y, "z": _player.global_position.z})
 		_downed_camera_yaw = _player.rotation.y
 		_downed_camera_pitch = 0.52
 		_spawn_local_downed_body()
 		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 		_setup_downed_hud()
 		_check_all_down()
+
+func _spawn_blood_decal(pos: Vector3, texture_path: String, size: Vector3 = Vector3(1.6, 2.0, 1.6)) -> void:
+	if not ResourceLoader.exists(texture_path):
+		return
+	var tex = load(texture_path) as Texture2D
+	if not tex:
+		return
+	var decal := Decal.new()
+	decal.texture_albedo = tex
+	decal.size = Vector3(size.x, 2.0, size.z)
+	decal.global_position = pos + Vector3(0, 0.05, 0)
+	decal.rotation.y = randf() * TAU
+	decal.cull_mask = 1
+	add_child(decal)
+
+func _play_downed_scream() -> void:
+	if not is_instance_valid(_player) or not has_node("/root/AudioManager"):
+		return
+	if _sfx.has("scream"):
+		AudioManager.play_sfx_3d(self, _sfx["scream"], _player.global_position + Vector3(0, 0.4, 0), -2.0, 32.0, randf_range(0.9, 1.1))
+	elif _sfx.has("gasp"):
+		AudioManager.play_sfx_3d(self, _sfx["gasp"], _player.global_position + Vector3(0, 0.4, 0), -2.0, 32.0, randf_range(0.85, 1.0))
 	else:
 		# Singleplayer: instant death
 		_local_is_down = true

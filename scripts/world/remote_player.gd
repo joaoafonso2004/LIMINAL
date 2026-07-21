@@ -233,18 +233,21 @@ func _tick_crouch_posture(delta: float) -> void:
 
 
 func _update_animation() -> void:
-	if _anim_player == null or is_downed:
+	if _anim_player == null:
 		return
 
-	var want := "ual1_Idle"
-	if _net_crouching:
+	var want := "idle"
+	if is_downed:
+		want = "crawl_down" if _speed_smooth > WALK_THRESHOLD else "downed"
+		_anim_player.speed_scale = 1.0
+	elif _net_crouching:
 		want = "crouch_walk" if _speed_smooth > WALK_THRESHOLD else "crouch_idle"
 		_anim_player.speed_scale = 1.0
 	elif _speed_smooth > WALK_THRESHOLD:
 		want = "run" if _net_sprinting else "walk"
 		_anim_player.speed_scale = 1.0
 	else:
-		want = "ual1_Idle"
+		want = "idle"
 		_anim_player.speed_scale = 1.0
 
 	if want == _cur_clip:
@@ -253,6 +256,9 @@ func _update_animation() -> void:
 	if _anim_player.has_animation(want):
 		_anim_player.play(want, 0.2)
 		_cur_clip = want
+	elif want == "crawl_down" and _anim_player.has_animation("crawl"):
+		_anim_player.play("crawl", 0.2)
+		_cur_clip = "crawl"
 	elif _anim_player.has_animation("ual1_Walk") and _speed_smooth > WALK_THRESHOLD:
 		_anim_player.play("ual1_Walk", 0.2)
 		_cur_clip = "ual1_Walk"
