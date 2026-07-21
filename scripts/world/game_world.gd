@@ -1205,10 +1205,11 @@ func _spawn_blood_decal(pos: Vector3, texture_path: String, size: Vector3 = Vect
 func _play_downed_scream() -> void:
 	if not is_instance_valid(_player) or not has_node("/root/AudioManager"):
 		return
-	if _sfx.has("scream"):
-		AudioManager.play_sfx_3d(self, _sfx["scream"], _player.global_position + Vector3(0, 0.4, 0), -2.0, 32.0, randf_range(0.9, 1.1))
-	elif _sfx.has("gasp"):
-		AudioManager.play_sfx_3d(self, _sfx["gasp"], _player.global_position + Vector3(0, 0.4, 0), -2.0, 32.0, randf_range(0.85, 1.0))
+	var scream_path := "res://assets/audio/sfx/enemy/enemy_jumpscare_scream.mp3"
+	if ResourceLoader.exists(scream_path):
+		var stream = load(scream_path) as AudioStream
+		if stream:
+			AudioManager.play_sfx_3d(self, stream, _player.global_position + Vector3(0, 0.4, 0), -2.0, 32.0, randf_range(0.9, 1.1))
 	else:
 		# Singleplayer: instant death
 		_local_is_down = true
