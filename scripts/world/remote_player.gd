@@ -37,6 +37,7 @@ const PLAYER_TINTS := [
 
 
 var is_downed := false
+var is_reviving := false
 
 func _ready() -> void:
 	collision_layer = 4
@@ -245,6 +246,9 @@ func _update_animation() -> void:
 	var want := "idle"
 	if is_downed:
 		want = "crawl_down" if _speed_smooth > WALK_THRESHOLD else "downed"
+		_anim_player.speed_scale = 1.0
+	elif is_reviving:
+		want = "revive"
 		_anim_player.speed_scale = 1.0
 	elif _net_crouching:
 		want = "crouch_walk" if _speed_smooth > WALK_THRESHOLD else "crouch_idle"

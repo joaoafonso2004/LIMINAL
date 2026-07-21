@@ -602,6 +602,7 @@ func _tick_downed_and_revive(delta: float) -> void:
 			if dist < 2.5:
 				var holding_e := Input.is_action_pressed("interact")
 				if holding_e:
+					_player.is_reviving = true
 					_revive_hold_timer += delta
 					_set_revive_progress(_revive_hold_timer, true)
 					NetManager.send("reviving", {"target": downed_rp.player_id, "prog": _revive_hold_timer})
@@ -610,6 +611,7 @@ func _tick_downed_and_revive(delta: float) -> void:
 						_interact_prompt.visible = true
 					if _revive_hold_timer >= 10.0:
 						# REVIVED!
+						_player.is_reviving = false
 						_revive_hold_timer = 0.0
 						_set_revive_progress(0.0, false)
 						NetManager.send("revived", {"target": downed_rp.player_id})
@@ -618,18 +620,23 @@ func _tick_downed_and_revive(delta: float) -> void:
 						_remote_down.erase(downed_rp.player_id)
 						_play_revive_spectacle(downed_rp.global_position)
 				else:
+					_player.is_reviving = false
 					_revive_hold_timer = maxf(0.0, _revive_hold_timer - delta * 2.0)
 					_set_revive_progress(_revive_hold_timer, _revive_hold_timer > 0.0)
 					if _interact_prompt:
 						_interact_prompt.text = "HOLD [E] TO REVIVE TEAMMATE"
 						_interact_prompt.visible = true
 			else:
+				_player.is_reviving = false
 				_revive_hold_timer = 0.0
 				_set_revive_progress(0.0, false)
 		else:
+			_player.is_reviving = false
 			_revive_hold_timer = 0.0
 			_set_revive_progress(0.0, false)
 	else:
+		if is_instance_valid(_player):
+			_player.is_reviving = false
 		_set_revive_progress(0.0, false)
 
 func _get_living_remote_player() -> Node3D:

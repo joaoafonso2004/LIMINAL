@@ -45,6 +45,7 @@ var is_crouching: bool = false
 var is_sprinting: bool = false
 var is_downed: bool = false
 var is_dead: bool = false
+var is_reviving: bool = false
 var sprint_seconds: float = Tuning.SPRINT_MAX_SECONDS
 var _current_eye_height: float = EYE_HEIGHT
 var _sprint_regen_delay: float = 0.0
@@ -464,6 +465,9 @@ func _update_body_animation() -> void:
 		_anim_player.speed_scale = 1.0
 	elif is_downed:
 		want = "crawl_down" if horizontal_speed > 0.08 and is_on_floor() else "downed"
+		_anim_player.speed_scale = 1.0
+	elif is_reviving:
+		want = "revive"
 		_anim_player.speed_scale = 1.0
 	elif is_crouching:
 		want = "crouch_walk" if horizontal_speed > 0.3 and is_on_floor() and not frozen else "crouch_idle"
