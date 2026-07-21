@@ -107,6 +107,8 @@ func _load_model() -> Node3D:
 ## Configure a successfully-loaded model: scale, normals, animation.
 func _setup_model(model: Node3D) -> void:
 	ModelUtils.setup_character_for_movement(model, 1.8)
+	if MODEL_PATH.ends_with(".fbx"):
+		model.rotation_degrees.y = 180.0
 	_apply_player_tint(model)
 
 	# Guard against a dark mesh from missing vertex normals.

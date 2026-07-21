@@ -392,8 +392,10 @@ func _spawn_fp_body() -> void:
 	var model := packed.instantiate() as Node3D
 	_mesh_root.add_child(model)
 	
-	# Scale the character
+	# Scale and orient character (FBX models face +Z, rotate 180° so face points forward)
 	ModelUtils.scale_to_height(model, 1.8)
+	if model_path.ends_with(".fbx"):
+		model.rotation_degrees.y = 180.0
 	
 	# Ground the model locally relative to _mesh_root (so feet bottom is at local Y=0 of player capsule)
 	var local_aabb := ModelUtils._get_combined_aabb(model)

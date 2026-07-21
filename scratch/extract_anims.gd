@@ -137,6 +137,11 @@ func _init():
 							var t2_idx := new_clip.add_track(track_type)
 							new_clip.track_set_path(t2_idx, path2)
 
+							# Target 3: Game_engine/Skeleton3D (Nested Unreal bones for player.fbx)
+							var path3 := NodePath("Game_engine/Skeleton3D:" + unreal_subname + property_suffix)
+							var t3_idx := new_clip.add_track(track_type)
+							new_clip.track_set_path(t3_idx, path3)
+
 							# Copy keyframes
 							for k in range(clip.track_get_key_count(track_idx)):
 								var time := clip.track_get_key_time(track_idx, k)
@@ -161,6 +166,7 @@ func _init():
 
 								new_clip.track_insert_key(t1_idx, time, val)
 								new_clip.track_insert_key(t2_idx, time, val)
+								new_clip.track_insert_key(t3_idx, time, val)
 
 						var target_key: String = String(key)
 						if anim_lib.has_animation(target_key):

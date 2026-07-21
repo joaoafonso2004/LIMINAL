@@ -1643,17 +1643,21 @@ func _blacken(model: Node3D) -> void:
 func _play_anim(name: String) -> void:
 	if _fig_anim == null:
 		return
-	if _fig_anim.has_animation(name):
-		if _fig_anim.current_animation != name:
-			_fig_anim.play(name, 0.2)
-			if name == "crawl":
+	var target_name := name
+	if target_name == "ual1_Sprint" or target_name == "run":
+		target_name = "crawl_chase" if _fig_anim.has_animation("crawl_chase") else "crawl"
+	elif target_name == "ual1_Walk" or target_name == "walk":
+		target_name = "crawl"
+	elif target_name == "ual1_Idle" or target_name == "idle":
+		target_name = "crouch_idle" if _fig_anim.has_animation("crouch_idle") else "idle"
+
+	if _fig_anim.has_animation(target_name):
+		if _fig_anim.current_animation != target_name:
+			_fig_anim.play(target_name, 0.2)
+			if target_name == "crawl":
 				_fig_anim.speed_scale = 1.0
-			elif name == "crawl_chase":
+			elif target_name == "crawl_chase":
 				_fig_anim.speed_scale = 2.2
-	elif name == "crawl" and _fig_anim.has_animation("crawl_chase"):
-		if _fig_anim.current_animation != "crawl_chase":
-			_fig_anim.play("crawl_chase", 0.2)
-			_fig_anim.speed_scale = 0.7
 
 func _face_player(fig: Node3D) -> void:
 	if not is_instance_valid(fig) or not is_instance_valid(_player):
