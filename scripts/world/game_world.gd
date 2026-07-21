@@ -229,34 +229,32 @@ func _on_intro_start_pressed() -> void:
 
 # ---------------------------------------------------------------------------
 func _setup_environment() -> void:
-	# Level 0 grade: sickly fluorescent yellow with neutral-green shadows. Keep
-	# the darkness, but avoid the orange cast that made every surface look brown.
 	var env := Environment.new()
 	env.background_mode = Environment.BG_COLOR
-	env.background_color = Color(0.011, 0.012, 0.008)
+	env.background_color = Color(0.008, 0.008, 0.005)
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
-	env.ambient_light_color = Color(0.36, 0.36, 0.26)
+	env.ambient_light_color = Color(0.38, 0.36, 0.22)
 	var darkness_mult := 1.0
 	if _is_mp and has_node("/root/NetManager"):
 		darkness_mult = maxf(1.0, float(NetManager.rule("darkness", 1.0)))
 	env.ambient_light_energy = Tuning.AMBIENT_ENERGY / darkness_mult
 	env.tonemap_mode = Environment.TONE_MAPPER_ACES
-	env.tonemap_exposure = 0.86 / lerpf(1.0, darkness_mult, 0.35)
+	env.tonemap_exposure = 0.92 / lerpf(1.0, darkness_mult, 0.35)
 	env.tonemap_white = 6.0
 	env.glow_enabled = true
-	env.glow_intensity = 0.6
-	env.glow_strength = 1.05
-	env.glow_bloom = 0.3
+	env.glow_intensity = 0.5
+	env.glow_strength = 1.0
+	env.glow_bloom = 0.25
 	env.glow_blend_mode = Environment.GLOW_BLEND_MODE_SOFTLIGHT
 	env.fog_enabled = true
-	env.fog_light_color = Color(0.40, 0.40, 0.29)
-	env.fog_light_energy = 0.56
+	env.fog_light_color = Color(0.22, 0.22, 0.14)
+	env.fog_light_energy = 0.38
 	env.fog_density = Tuning.FOG_DENSITY
 	env.fog_sky_affect = 0.0
 	env.adjustment_enabled = true
-	env.adjustment_brightness = 0.98
-	env.adjustment_contrast = 1.10
-	env.adjustment_saturation = 0.76
+	env.adjustment_brightness = 1.0
+	env.adjustment_contrast = 1.12
+	env.adjustment_saturation = 0.92
 	var we := WorldEnvironment.new()
 	we.environment = env
 	add_child(we)

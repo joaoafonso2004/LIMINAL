@@ -1631,7 +1631,7 @@ var _fig_silh_mats: Array[StandardMaterial3D] = []
 
 func _blacken(model: Node3D) -> void:
 	var mat := StandardMaterial3D.new()
-	mat.albedo_color = Color(0.12, 0.12, 0.14)
+	mat.albedo_color = Color(0.02, 0.02, 0.02)
 	mat.roughness = 1.0
 	mat.metallic = 0.0
 	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
@@ -1639,6 +1639,8 @@ func _blacken(model: Node3D) -> void:
 	for child in model.find_children("*", "MeshInstance3D"):
 		var mi := child as MeshInstance3D
 		if mi:
+			for s in range(mi.get_surface_override_material_count()):
+				mi.set_surface_override_material(s, null)
 			mi.material_override = mat
 			mi.set_meta("silh_mat", mat)
 	# One shared silhouette material for the whole figure — cache it so the
