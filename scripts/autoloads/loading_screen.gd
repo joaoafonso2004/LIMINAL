@@ -58,6 +58,7 @@ const PRELOAD_PATHS: PackedStringArray = [
 	"res://assets/audio/sfx/player/player_player_step_carpet.mp3",
 	# -- 3D models + animation libs (load last) --
 	"res://assets/animations/humanoid_profile_bone_map.tres",
+	"res://assets/characters/survivor_body/player.fbx",
 	"res://assets/characters/survivor_body/survivor_body.glb",
 	"res://assets/characters/survivor_body/survivor_body_animations.tres",
 	"res://assets/characters/watcher_silhouette/watcher_silhouette.glb",

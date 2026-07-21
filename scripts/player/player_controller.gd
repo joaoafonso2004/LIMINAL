@@ -375,10 +375,12 @@ func get_current_cell(cell_size: float) -> Vector2i:
 
 
 func _spawn_fp_body() -> void:
-	var model_path := "res://assets/characters/survivor_body/survivor_body.glb"
+	var model_path := "res://assets/characters/survivor_body/player.fbx"
 	var anim_path := "res://assets/characters/survivor_body/survivor_body_animations.tres"
 	if not ResourceLoader.exists(model_path):
-		return
+		model_path = "res://assets/characters/survivor_body/survivor_body.glb"
+		if not ResourceLoader.exists(model_path):
+			return
 	
 	_mesh_root = Node3D.new()
 	_mesh_root.name = "FirstPersonBody"
@@ -497,12 +499,16 @@ func is_bone_to_collapse(skeleton: Skeleton3D, bone_idx: int) -> bool:
 	var collapse_names := [
 		"Spine", "Spine1", "Spine2", "Chest", "UpperChest", "Neck", "Head",
 		"LeftShoulder", "LeftUpperArm", "LeftLowerArm", "LeftHand",
-		"RightShoulder", "RightUpperArm", "RightLowerArm", "RightHand"
+		"RightShoulder", "RightUpperArm", "RightLowerArm", "RightHand",
+		# Unreal-style bone names (player.fbx)
+		"spine_01", "spine_02", "spine_03", "neck_01", "head",
+		"clavicle_l", "upperarm_l", "lowerarm_l", "hand_l",
+		"clavicle_r", "upperarm_r", "lowerarm_r", "hand_r"
 	]
 	var cur := bone_idx
 	while cur != -1:
-		var name := skeleton.get_bone_name(cur)
-		if collapse_names.has(name):
+		var bname := skeleton.get_bone_name(cur)
+		if collapse_names.has(bname):
 			return true
 		cur = skeleton.get_bone_parent(cur)
 	return false

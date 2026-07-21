@@ -4,7 +4,8 @@ extends CharacterBody3D
 
 signal footstep_emitted(world_position: Vector3, audible_range: float, kind: String)
 
-const MODEL_PATH := "res://assets/characters/survivor_body/survivor_body.glb"
+const MODEL_PATH := "res://assets/characters/survivor_body/player.fbx"
+const MODEL_PATH_FALLBACK := "res://assets/characters/survivor_body/survivor_body.glb"
 const ANIM_PATH := "res://assets/characters/survivor_body/survivor_body_animations.tres"
 const STEP_PATH := "res://assets/audio/sfx/player/player_player_step_carpet.mp3"
 
@@ -91,9 +92,12 @@ func set_downed(v: bool) -> void:
 
 ## Load and instance the survivor GLB, or null if unavailable.
 func _load_model() -> Node3D:
-	if not ResourceLoader.exists(MODEL_PATH):
-		return null
-	var packed := load(MODEL_PATH) as PackedScene
+	var path := MODEL_PATH
+	if not ResourceLoader.exists(path):
+		path = MODEL_PATH_FALLBACK
+		if not ResourceLoader.exists(path):
+			return null
+	var packed := load(path) as PackedScene
 	if packed == null:
 		return null
 	var instance := packed.instantiate() as Node3D
@@ -238,9 +242,14 @@ func _apply_head_pitch() -> void:
 	if skeletons.size() == 0:
 		return
 	var skeleton: Skeleton3D = skeletons[0]
+	# Try both naming conventions
 	var head_idx := skeleton.find_bone("Head")
 	if head_idx == -1:
+		head_idx = skeleton.find_bone("head")
+	if head_idx == -1:
 		head_idx = skeleton.find_bone("Neck")
+	if head_idx == -1:
+		head_idx = skeleton.find_bone("neck_01")
 	if head_idx != -1:
 		# Pitch head up/down following remote player's camera pitch angle
 		var q := Quaternion(Vector3.RIGHT, _current_pitch)
