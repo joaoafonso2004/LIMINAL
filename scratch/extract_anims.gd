@@ -166,7 +166,10 @@ func _init():
 
 								new_clip.track_insert_key(t1_idx, time, val)
 								new_clip.track_insert_key(t2_idx, time, val)
-								new_clip.track_insert_key(t3_idx, time, val)
+								# For player.fbx Game_engine/Skeleton3D, do NOT insert position keyframe on pelvis for standing clips,
+								# so the character stands 100% upright on their feet without lying flat on the floor!
+								if not (unreal_subname == "pelvis" and track_type == Animation.TYPE_POSITION_3D and not (key in ["downed", "dead", "crawl_down", "revive", "revive_get_up"])):
+									new_clip.track_insert_key(t3_idx, time, val)
 
 						var target_key: String = String(key)
 						if anim_lib.has_animation(target_key):
