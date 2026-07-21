@@ -122,7 +122,10 @@ func _setup_model(model: Node3D) -> void:
 		if lib != null:
 			_anim_player.add_animation_library("", lib)
 			ModelUtils.set_animation_loops(_anim_player)
-			if _anim_player.has_animation("ual1_Idle"):
+			if _anim_player.has_animation("idle"):
+				_anim_player.play("idle")
+				_cur_clip = "idle"
+			elif _anim_player.has_animation("ual1_Idle"):
 				_anim_player.play("ual1_Idle")
 				_cur_clip = "ual1_Idle"
 
