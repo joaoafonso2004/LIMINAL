@@ -78,9 +78,9 @@ func set_downed(v: bool) -> void:
 				_anim_player.play("downed", 0.25)
 				_cur_clip = "downed"
 		else:
-			if is_instance_valid(_anim_player) and _anim_player.has_animation("revive"):
-				_anim_player.play("revive", 0.2)
-				_cur_clip = "revive"
+			if is_instance_valid(_anim_player) and _anim_player.has_animation("revive_get_up"):
+				_anim_player.play("revive_get_up", 0.2)
+				_cur_clip = "revive_get_up"
 			elif is_instance_valid(_anim_player) and _anim_player.has_animation("idle"):
 				_anim_player.play("idle", 0.2)
 				_cur_clip = "idle"

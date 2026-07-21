@@ -43,7 +43,8 @@ var _anim_player: AnimationPlayer
 var _cur_clip: String = ""
 var is_crouching: bool = false
 var is_sprinting: bool = false
-var sprint_enabled := true
+var is_downed: bool = false
+var is_dead: bool = false
 var sprint_seconds: float = Tuning.SPRINT_MAX_SECONDS
 var _current_eye_height: float = EYE_HEIGHT
 var _sprint_regen_delay: float = 0.0
@@ -458,7 +459,10 @@ func _update_body_animation() -> void:
 		return
 	var horizontal_speed := Vector2(velocity.x, velocity.z).length()
 	var want := "idle"
-	if is_downed:
+	if is_dead:
+		want = "dead"
+		_anim_player.speed_scale = 1.0
+	elif is_downed:
 		want = "crawl_down" if horizontal_speed > 0.08 and is_on_floor() else "downed"
 		_anim_player.speed_scale = 1.0
 	elif is_crouching:
