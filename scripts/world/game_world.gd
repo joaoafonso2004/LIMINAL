@@ -984,6 +984,7 @@ func _broadcast_position() -> void:
 		"y": _player.global_position.y,
 		"z": _player.global_position.z,
 		"ry": _player.rotation.y,
+		"pitch": _camera.rotation.x if is_instance_valid(_camera) else 0.0,
 		"spr": bool(_player.is_sprinting) if "is_sprinting" in _player else false,
 		"cr": bool(_player.is_crouching) if "is_crouching" in _player else false,
 	})

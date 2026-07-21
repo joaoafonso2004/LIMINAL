@@ -20,6 +20,8 @@ var _cur_clip: String = ""
 # Networked smoothing state.
 var _target_pos: Vector3
 var _target_rot_y: float
+var _target_pitch: float = 0.0
+var _current_pitch: float = 0.0
 var _prev_actual_pos: Vector3
 var _speed_smooth: float
 var _got_first: bool = false
@@ -176,6 +178,7 @@ func update_target(msg: Dictionary) -> void:
 		float(msg.get("y", 0.0)),
 		float(msg.get("z", 0.0)))
 	_target_rot_y = float(msg.get("ry", 0.0))
+	_target_pitch = clampf(float(msg.get("pitch", 0.0)), -1.3, 1.3)
 	_net_sprinting = bool(msg.get("spr", false))
 	_net_crouching = bool(msg.get("cr", false))
 
@@ -183,6 +186,7 @@ func update_target(msg: Dictionary) -> void:
 		_got_first = true
 		global_position = _target_pos
 		rotation.y = _target_rot_y
+		_current_pitch = _target_pitch
 		_prev_actual_pos = _target_pos
 
 
@@ -191,9 +195,12 @@ func set_dead(v: bool) -> void:
 	if _mesh_root == null:
 		return
 	if v:
-		# Collapse the body flat on the ground
-		var tw := create_tween()
-		tw.tween_property(_mesh_root, "rotation:x", -PI * 0.5, 0.5)
+		if is_instance_valid(_anim_player) and _anim_player.has_animation("dead"):
+			_anim_player.play("dead", 0.3)
+			_cur_clip = "dead"
+		else:
+			var tw := create_tween()
+			tw.tween_property(_mesh_root, "rotation:x", -PI * 0.5, 0.5)
 	else:
 		var tw := create_tween()
 		tw.tween_property(_mesh_root, "rotation:x", 0.0, 0.35)
@@ -206,6 +213,8 @@ func _process(delta: float) -> void:
 	var w: float = clamp(LERP_WEIGHT * delta, 0.0, 1.0)
 	global_position = global_position.lerp(_target_pos, w)
 	rotation.y = lerp_angle(rotation.y, _target_rot_y, w)
+	_current_pitch = lerpf(_current_pitch, _target_pitch, 12.0 * delta)
+	_apply_head_pitch()
 
 	var moved: float = (global_position - _prev_actual_pos).length() / maxf(delta, 0.001)
 	var frame_distance := global_position.distance_to(_prev_actual_pos)
@@ -220,6 +229,22 @@ func _process(delta: float) -> void:
 
 	_tick_crouch_posture(delta)
 	_update_animation()
+
+
+func _apply_head_pitch() -> void:
+	if _mesh_root == null or not is_instance_valid(_mesh_root):
+		return
+	var skeletons := _mesh_root.find_children("*", "Skeleton3D")
+	if skeletons.size() == 0:
+		return
+	var skeleton: Skeleton3D = skeletons[0]
+	var head_idx := skeleton.find_bone("Head")
+	if head_idx == -1:
+		head_idx = skeleton.find_bone("Neck")
+	if head_idx != -1:
+		# Pitch head up/down following remote player's camera pitch angle
+		var q := Quaternion(Vector3.RIGHT, _current_pitch)
+		skeleton.set_bone_pose_rotation(head_idx, q)
 
 
 func _tick_crouch_posture(delta: float) -> void:
