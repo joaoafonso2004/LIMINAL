@@ -455,8 +455,13 @@ func _spawn_fp_body() -> void:
 				_anim_player.play("ual1_Idle")
 				_cur_clip = "ual1_Idle"
 
+	# Hide first-person body in 1st person mode so mesh polygons never clip or block the camera lens!
+	_mesh_root.visible = is_downed
+
 
 func _update_body_animation() -> void:
+	if _mesh_root != null and is_instance_valid(_mesh_root):
+		_mesh_root.visible = is_downed
 	_update_bone_collapse()
 	if _anim_player == null:
 		return
