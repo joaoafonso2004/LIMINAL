@@ -70,10 +70,9 @@ func _ready() -> void:
 func set_downed(v: bool) -> void:
 	is_downed = v
 	if is_instance_valid(_mesh_root):
-		var tw := create_tween().set_parallel(true).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
-		tw.tween_property(_mesh_root, "position", Vector3.ZERO, 0.35)
-		tw.tween_property(_mesh_root, "rotation", Vector3.ZERO, 0.35)
-		tw.tween_property(_mesh_root, "scale", Vector3.ONE, 0.35)
+		_mesh_root.position = Vector3.ZERO
+		_mesh_root.rotation = Vector3.ZERO
+		_mesh_root.scale = Vector3.ONE
 		if v:
 			if is_instance_valid(_anim_player) and _anim_player.has_animation("downed"):
 				_anim_player.play("downed", 0.25)
@@ -82,6 +81,9 @@ func set_downed(v: bool) -> void:
 			if is_instance_valid(_anim_player) and _anim_player.has_animation("revive"):
 				_anim_player.play("revive", 0.2)
 				_cur_clip = "revive"
+			elif is_instance_valid(_anim_player) and _anim_player.has_animation("idle"):
+				_anim_player.play("idle", 0.2)
+				_cur_clip = "idle"
 
 
 ## Load and instance the survivor GLB, or null if unavailable.
@@ -220,11 +222,15 @@ func _process(delta: float) -> void:
 
 
 func _tick_crouch_posture(delta: float) -> void:
-	if _mesh_root == null or is_downed:
+	if _mesh_root == null:
 		return
-	var target_y := -0.45 if _net_crouching else 0.0
-	var target_scale := Vector3(1.08, 0.72, 1.08) if _net_crouching else Vector3.ONE
-	var target_rot_x := 0.22 if _net_crouching else 0.0
+	var target_y := 0.0
+	var target_scale := Vector3.ONE
+	var target_rot_x := 0.0
+	if not is_downed and _net_crouching:
+		target_y = -0.45
+		target_scale = Vector3(1.08, 0.72, 1.08)
+		target_rot_x = 0.22
 
 	var lerp_speed := 14.0 * delta
 	_mesh_root.position.y = lerpf(_mesh_root.position.y, target_y, lerp_speed)

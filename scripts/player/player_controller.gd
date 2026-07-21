@@ -453,6 +453,7 @@ func _spawn_fp_body() -> void:
 
 
 func _update_body_animation() -> void:
+	_update_bone_collapse()
 	if _anim_player == null:
 		return
 	var horizontal_speed := Vector2(velocity.x, velocity.z).length()
@@ -499,12 +500,18 @@ func is_bone_to_collapse(skeleton: Skeleton3D, bone_idx: int) -> bool:
 	return false
 
 
-func _hide_head() -> void:
+func _update_bone_collapse() -> void:
 	if _mesh_root == null or not is_instance_valid(_mesh_root):
 		return
 	var skeletons := _mesh_root.find_children("*", "Skeleton3D")
 	if skeletons.size() > 0:
 		var skeleton: Skeleton3D = skeletons[0]
+		var should_collapse := not is_downed
 		for i in range(skeleton.get_bone_count()):
 			if is_bone_to_collapse(skeleton, i):
-				skeleton.set_bone_pose_scale(i, Vector3.ZERO)
+				var scale_val := Vector3.ZERO if should_collapse else Vector3.ONE
+				skeleton.set_bone_pose_scale(i, scale_val)
+
+
+func _hide_head() -> void:
+	_update_bone_collapse()
