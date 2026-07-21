@@ -547,11 +547,7 @@ func _tick_downed_and_revive(delta: float) -> void:
 		else:
 			_bleedout_timer -= delta
 
-		# Periodic pain screams while downed
-		_downed_scream_timer -= delta
-		if _downed_scream_timer <= 0.0:
-			_downed_scream_timer = randf_range(3.5, 5.5)
-			_play_downed_scream()
+		# (Automatic screams removed: player now presses Q to scream on demand!)
 
 		# Injured blood trail while crawling (every 3 seconds of movement)
 		if is_instance_valid(_player):
@@ -744,13 +740,14 @@ func _on_player_noise(world_position: Vector3, audible_range: float, kind: Strin
 
 func _tick_callout(delta: float) -> void:
 	_callout_cooldown = maxf(0.0, _callout_cooldown - delta)
-	if not _is_mp or (_local_is_down and not _is_downed) or _ended or not is_instance_valid(_player):
+	if _ended or not is_instance_valid(_player):
 		return
 	if Input.is_action_just_pressed("callout") and _callout_cooldown <= 0.0:
-		_callout_cooldown = Tuning.COOP_CALLOUT_COOLDOWN
+		_callout_cooldown = 1.5 if _is_downed else Tuning.COOP_CALLOUT_COOLDOWN
 		var pos := _player.global_position + Vector3.UP
-		_play_callout(pos, NetManager.local_player_id, _is_downed)
-		NetManager.send("callout", {"x": pos.x, "y": pos.y, "z": pos.z, "downed": _is_downed})
+		_play_callout(pos, NetManager.local_player_id if _is_mp else 0, _is_downed)
+		if _is_mp:
+			NetManager.send("callout", {"x": pos.x, "y": pos.y, "z": pos.z, "downed": _is_downed})
 		if not _is_downed and _entity and _entity.has_method("investigate_noise"):
 			_entity.investigate_noise(pos, Tuning.COOP_CALLOUT_ENTITY_RANGE, "callout")
 

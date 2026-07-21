@@ -1614,6 +1614,8 @@ func _spawn_figure(pos: Vector3, _instant: bool) -> void:
 		var lib = _anim_lib.duplicate(true) as AnimationLibrary
 		ap.add_animation_library("", lib)
 		ModelUtils.set_animation_loops(ap)
+		if ap.has_animation("crawl"):
+			ap.play("crawl")
 	_fig_anim = ap
 	_figure = mesh_root
 	_set_figure_alpha(1.0)
@@ -1890,6 +1892,8 @@ func _spawn_mirror() -> void:
 	if _anim_lib:
 		ap.add_animation_library("", _anim_lib)
 		ModelUtils.set_animation_loops(ap)
+		if ap.has_animation("crawl"):
+			ap.play("crawl")
 	_mirror = mesh_root
 	_mirror_anim = ap
 	_mirror.set_meta("fresh", true)
