@@ -154,7 +154,11 @@ func _physics_process(delta: float) -> void:
 		is_sprinting = false
 		target_speed = 0.85 # Slow crawling speed while downed
 		target_eye_height = 0.35 # Carpet level camera
-		target_mesh_scale_y = 0.38
+		# NO vertical squash while downed — crawl_down already lays the body flat,
+		# and squashing it to 0.38 on top of that is what tore the crawling body
+		# apart on the downed player's own screen (the remote body never squashed,
+		# which is why it looked fine there).
+		target_mesh_scale_y = 1.0
 	elif is_crouching:
 		target_speed = Tuning.CROUCH_SPEED
 		target_eye_height = 0.85
@@ -450,6 +454,7 @@ func _spawn_fp_body() -> void:
 			
 			_anim_player.add_animation_library("", lib)
 			ModelUtils.set_animation_loops(_anim_player)
+			ModelUtils.upright_standing_root(_anim_player)
 			if _anim_player.has_animation("idle"):
 				_anim_player.play("idle")
 				_cur_clip = "idle"
@@ -473,7 +478,10 @@ func _update_body_animation() -> void:
 		want = "dead"
 		_anim_player.speed_scale = 1.0
 	elif is_downed:
-		want = "crawl_down" if horizontal_speed > 0.08 and is_on_floor() else "downed"
+		# A downed player is always on the floor; don't gate the crawl on
+		# is_on_floor() (it flickers and leaves the blend stuck half-way between
+		# downed and crawl_down, which reads as "body frozen, one leg twitching").
+		want = "crawl_down" if horizontal_speed > 0.12 else "downed"
 		_anim_player.speed_scale = 1.0
 	elif is_reviving:
 		want = "revive"
@@ -492,7 +500,7 @@ func _update_body_animation() -> void:
 		return
 
 	if _anim_player.has_animation(want):
-		_anim_player.play(want, 0.2)
+		ModelUtils.play_locomotion(_anim_player, want, _cur_clip, 0.2)
 		_cur_clip = want
 	elif want == "crawl_down" and _anim_player.has_animation("crawl"):
 		_anim_player.play("crawl", 0.2)
@@ -502,22 +510,12 @@ func _update_body_animation() -> void:
 		_cur_clip = "ual1_Idle"
 
 
-func is_bone_to_collapse(skeleton: Skeleton3D, bone_idx: int) -> bool:
-	var collapse_names := [
-		"Spine", "Spine1", "Spine2", "Chest", "UpperChest", "Neck", "Head",
-		"LeftShoulder", "LeftUpperArm", "LeftLowerArm", "LeftHand",
-		"RightShoulder", "RightUpperArm", "RightLowerArm", "RightHand",
-		# Unreal-style bone names (player.fbx)
-		"spine_01", "spine_02", "spine_03", "neck_01", "head",
-		"clavicle_l", "upperarm_l", "lowerarm_l", "hand_l",
-		"clavicle_r", "upperarm_r", "lowerarm_r", "hand_r"
-	]
-	var cur := bone_idx
-	while cur != -1:
-		var bname := skeleton.get_bone_name(cur)
-		if collapse_names.has(bname):
-			return true
-		cur = skeleton.get_bone_parent(cur)
+func is_bone_to_collapse(_skeleton: Skeleton3D, _bone_idx: int) -> bool:
+	# DISABLED. The first-person body is hidden as a whole while standing
+	# (_mesh_root.visible = is_downed), so collapsing the upper-body bones served
+	# no purpose — and it permanently wrecked their rest pose (scale 0.0001, no
+	# rotation) plus stripped their tracks, which left the body split and broken
+	# the moment it became visible while downed. Keeping the full rig intact.
 	return false
 
 

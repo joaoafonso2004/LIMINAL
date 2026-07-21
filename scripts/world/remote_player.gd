@@ -106,7 +106,10 @@ func _load_model() -> Node3D:
 
 ## Configure a successfully-loaded model: scale, normals, animation.
 func _setup_model(model: Node3D) -> void:
-	ModelUtils.setup_character_for_movement(model, 1.8)
+	# Scale + orient like the local first-person body. Grounding is deferred until
+	# after a resting clip is playing so it plants the ANIMATED standing pose (the
+	# emptied pelvis-position tracks otherwise leave the body floating).
+	ModelUtils.scale_to_height(model, 1.8)
 	if MODEL_PATH.ends_with(".fbx"):
 		model.rotation_degrees.y = 180.0
 	_apply_player_tint(model)
@@ -122,16 +125,23 @@ func _setup_model(model: Node3D) -> void:
 	model.add_child(_anim_player)
 
 	if ResourceLoader.exists(ANIM_PATH):
-		var lib := load(ANIM_PATH) as AnimationLibrary
-		if lib != null:
+		var shared := load(ANIM_PATH) as AnimationLibrary
+		if shared != null:
+			# Duplicate before mutating so upright_standing_root never edits the
+			# shared cached resource used by other bodies.
+			var lib := shared.duplicate(true) as AnimationLibrary
 			_anim_player.add_animation_library("", lib)
 			ModelUtils.set_animation_loops(_anim_player)
+			ModelUtils.upright_standing_root(_anim_player)
 			if _anim_player.has_animation("idle"):
 				_anim_player.play("idle")
 				_cur_clip = "idle"
 			elif _anim_player.has_animation("ual1_Idle"):
 				_anim_player.play("ual1_Idle")
 				_cur_clip = "ual1_Idle"
+
+	# Plant the feet on the floor using the live idle pose, not the bind pose.
+	ModelUtils.ground_character_by_pose(model, _anim_player)
 
 
 func _apply_player_tint(model: Node3D) -> void:
@@ -240,9 +250,13 @@ func _apply_head_pitch() -> void:
 	if head_idx == -1:
 		head_idx = skeleton.find_bone("neck_01")
 	if head_idx != -1:
-		# Pitch head up/down following remote player's camera pitch angle
-		var q := Quaternion(Vector3.RIGHT, _current_pitch)
-		skeleton.set_bone_pose_rotation(head_idx, q)
+		# Layer the look pitch ONTO the bone's rest orientation. Writing a raw
+		# Quaternion(RIGHT, pitch) wiped the head's correct base pose and could
+		# snap it hard; composing with the rest keeps the head where it belongs
+		# and just nods it toward the remote player's aim.
+		var rest_q := skeleton.get_bone_rest(head_idx).basis.get_rotation_quaternion()
+		var pitch := clampf(_current_pitch, -0.7, 0.7)
+		skeleton.set_bone_pose_rotation(head_idx, rest_q * Quaternion(Vector3.RIGHT, pitch))
 
 
 func _tick_crouch_posture(delta: float) -> void:
@@ -287,7 +301,7 @@ func _update_animation() -> void:
 		return
 
 	if _anim_player.has_animation(want):
-		_anim_player.play(want, 0.2)
+		ModelUtils.play_locomotion(_anim_player, want, _cur_clip, 0.2)
 		_cur_clip = want
 	elif want == "crawl_down" and _anim_player.has_animation("crawl"):
 		_anim_player.play("crawl", 0.2)

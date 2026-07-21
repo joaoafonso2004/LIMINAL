@@ -1406,6 +1406,11 @@ func _tick_dead_spectator(delta: float) -> void:
 	if not is_instance_valid(target):
 		return
 
+	# Stream the maze around the teammate we're watching, not our downed body,
+	# so they never walk into ungenerated void on the spectator screen.
+	if _maze and _maze.has_method("set_stream_focus"):
+		_maze.set_stream_focus(target.global_position)
+
 	# Smooth 1st/3rd-person follow camera with wall raycast collision
 	var spectate_mode_1st: bool = get_meta("spectate_first_person", false)
 	if Input.is_physical_key_pressed(KEY_C):
@@ -1465,6 +1470,8 @@ func _on_local_revived() -> void:
 	_incoming_revive_timeout = 0.0
 	_dead_spectator = false
 	_spectate_target_id = -1
+	if _maze and _maze.has_method("clear_stream_focus"):
+		_maze.clear_stream_focus()
 	if is_instance_valid(_spectator_canvas):
 		_spectator_canvas.queue_free()
 		_spectator_canvas = null

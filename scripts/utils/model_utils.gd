@@ -77,6 +77,236 @@ static func set_animation_loops(anim_player: AnimationPlayer) -> void:
 		else:
 			anim.loop_mode = Animation.LOOP_LINEAR
 
+## Cyclic locomotion clips whose foot phase should carry across a blend, so a
+## walk<->run switch does not scissor the legs (see play_locomotion).
+const LOCO_CLIPS := ["walk", "run", "crouch_walk"]
+
+## Play `want` on `anim_player`, preserving the normalized cycle phase when both
+## the outgoing and incoming clips are cyclic locomotion. Blending unsynchronized
+## walk/run cycles is what makes the limbs spin during a transition; matching the
+## phase keeps the same foot forward so the crossfade stays smooth.
+static func play_locomotion(anim_player: AnimationPlayer, want: String, current: String, blend: float = 0.18) -> void:
+	if anim_player == null or not anim_player.has_animation(want):
+		return
+	var carry := current in LOCO_CLIPS and want in LOCO_CLIPS \
+		and current != want and anim_player.has_animation(current)
+	var phase := 0.0
+	if carry:
+		var cur_len: float = anim_player.get_animation(current).length
+		if cur_len > 0.0:
+			phase = fposmod(anim_player.current_animation_position / cur_len, 1.0)
+	anim_player.play(want, blend)
+	if carry:
+		var new_len: float = anim_player.get_animation(want).length
+		anim_player.seek(phase * new_len, false)
+
+## Standing clips whose pelvis/root should stay at the upright rest orientation.
+const _STANDING_CLIPS := ["idle", "walk", "run", "crouch_idle", "crouch_walk", "lean_left", "lean_right"]
+const _ROOT_BONE_NAMES := ["pelvis", "Pelvis", "Hips", "hips", "root", "Root"]
+
+## The imported clips were authored for the survivor/mixamo pelvis frame; on the
+## player.fbx rig that frame lays the body on its side. The correct pose is the
+## clip's pelvis rotation composed ONTO the rig's rest (rest * key), which keeps
+## the pelvis animating (crouch/downed/crawl all lower and turn correctly) from an
+## upright base instead of a sideways one. For the standing clips we also pin the
+## pelvis POSITION to its rest so a crawl->idle transition snaps back upright
+## instead of leaving the hips stuck low. Call after the library is on `anim_player`.
+static func upright_standing_root(anim_player: AnimationPlayer) -> void:
+	if anim_player == null:
+		return
+	var model := anim_player.get_parent()
+	if model == null:
+		return
+	var skeletons := model.find_children("*", "Skeleton3D")
+	if skeletons.is_empty():
+		return
+	var skeleton := skeletons[0] as Skeleton3D
+	var root_idx := -1
+	for bone_name in _ROOT_BONE_NAMES:
+		root_idx = skeleton.find_bone(bone_name)
+		if root_idx != -1:
+			break
+	if root_idx == -1:
+		return
+	var rest := skeleton.get_bone_rest(root_idx)
+	var rest_pos := rest.origin
+	var rest_rot := rest.basis.get_rotation_quaternion()
+	for clip_name in anim_player.get_animation_list():
+		var is_standing := clip_name in _STANDING_CLIPS
+		var anim: Animation = anim_player.get_animation(clip_name)
+		for ti in range(anim.get_track_count()):
+			var path := anim.track_get_path(ti)
+			if path.get_subname_count() == 0 or not (String(path.get_subname(0)) in _ROOT_BONE_NAMES):
+				continue
+			var ttype := anim.track_get_type(ti)
+			if ttype == Animation.TYPE_ROTATION_3D:
+				# Re-frame every pelvis key onto the rig's rest orientation.
+				for k in range(anim.track_get_key_count(ti)):
+					var key_rot: Quaternion = anim.track_get_key_value(ti, k)
+					anim.track_set_key_value(ti, k, rest_rot * key_rot)
+			elif ttype == Animation.TYPE_POSITION_3D and is_standing:
+				_pin_track(anim, ti, rest_pos)
+
+## Replace every key on a track with one constant key holding `value` at t=0.
+static func _pin_track(anim: Animation, track_idx: int, value) -> void:
+	for k in range(anim.track_get_key_count(track_idx) - 1, -1, -1):
+		anim.track_remove_key(track_idx, k)
+	anim.track_insert_key(track_idx, 0.0, value)
+
+## Ground a skinned character by its ACTUAL posed skeleton rather than the static
+## bind-pose mesh AABB. Removed root-motion / pelvis-position tracks can leave the
+## animated standing pose floating above where the bind pose sat; measuring the
+## live bone poses and planting the lowest one on the floor fixes that regardless.
+## Call AFTER the model is in the tree and a resting clip is playing on anim_player.
+static func ground_character_by_pose(model: Node3D, anim_player: AnimationPlayer, floor_offset: float = 0.02) -> void:
+	if not is_instance_valid(model) or not model.is_inside_tree():
+		return
+	var skeletons := model.find_children("*", "Skeleton3D")
+	if skeletons.is_empty():
+		ground_model(model)
+		return
+	var skeleton := skeletons[0] as Skeleton3D
+	# Force the current animation frame onto the skeleton, then flush bone globals.
+	if is_instance_valid(anim_player) and anim_player.current_animation != "":
+		anim_player.seek(anim_player.current_animation_position, true)
+	if skeleton.has_method("force_update_all_bone_transforms"):
+		skeleton.force_update_all_bone_transforms()
+	var parent := model.get_parent() as Node3D
+	var lowest := INF
+	for i in range(skeleton.get_bone_count()):
+		var world_pos: Vector3 = skeleton.global_transform * skeleton.get_bone_global_pose(i).origin
+		var y := parent.to_local(world_pos).y if is_instance_valid(parent) else world_pos.y
+		if y < lowest:
+			lowest = y
+	if lowest == INF:
+		ground_model(model)
+		return
+	# Guard against a wild measurement teleporting the mesh.
+	var shift := lowest - floor_offset
+	if absf(shift) > 4.0:
+		ground_model(model)
+		return
+	model.position.y -= shift
+
+# ---------------------------------------------------------------------------
+# HUMANOID ANIMATION RETARGETING
+# The shared clip library was authored for the survivor / watcher skeletons
+# (mixamo-style "Hips/Spine/LeftUpperArm" bone names). Driving a different rig
+# — e.g. the entity.fbx, whose bones are lowercase "hips/spine/left_upper_arm"
+# — needs the track paths remapped to that rig's actual bone names. We match by
+# a canonical humanoid key so the exact spelling/side convention doesn't matter.
+# ---------------------------------------------------------------------------
+
+## Humanoid bones that come in left/right pairs and therefore carry a side tag.
+const _SIDED_BONES := ["shoulder", "upperarm", "lowerarm", "hand", "upperleg", "lowerleg", "foot", "toes"]
+
+## Which side ("l"/"r"/"") a bone name refers to, read before separators are
+## stripped so "LeftHand", "hand_l" and "hand.L" all resolve the same way.
+static func _bone_side(lower_name: String) -> String:
+	if lower_name.find("left") != -1:
+		return "l"
+	if lower_name.find("right") != -1:
+		return "r"
+	for sep in ["_", ".", "-", " "]:
+		if lower_name.ends_with(sep + "l"):
+			return "l"
+		if lower_name.ends_with(sep + "r"):
+			return "r"
+	return ""
+
+## Collapse any humanoid bone name to a canonical token (e.g. "upperarm.l"), or
+## "" if it is not a recognised humanoid bone. Central bones carry no side.
+static func canonical_bone(raw: String) -> String:
+	var lower := raw.to_lower().replace("mixamorig", "")
+	var side := _bone_side(lower)
+	var s := ""
+	for i in range(lower.length()):
+		var ch := lower[i]
+		if (ch >= "a" and ch <= "z") or (ch >= "0" and ch <= "9"):
+			s += ch
+	s = s.replace("left", "").replace("right", "")
+	var core := ""
+	if s.find("toe") != -1 or s.find("ball") != -1:
+		core = "toes"
+	elif s.find("foot") != -1 or s.find("ankle") != -1:
+		core = "foot"
+	elif s.find("thigh") != -1 or s.find("upleg") != -1 or s.find("upperleg") != -1:
+		core = "upperleg"
+	elif s.find("calf") != -1 or s.find("shin") != -1 or s.find("lowerleg") != -1 \
+			or (s.find("leg") != -1 and s.find("up") == -1):
+		core = "lowerleg"
+	elif s.find("hand") != -1:
+		core = "hand"
+	elif s.find("forearm") != -1 or s.find("lowerarm") != -1:
+		core = "lowerarm"
+	elif s.find("upperarm") != -1 or s.find("uparm") != -1 \
+			or (s.find("arm") != -1 and s.find("fore") == -1 and s.find("lower") == -1):
+		core = "upperarm"
+	elif s.find("clavicle") != -1 or s.find("shoulder") != -1:
+		core = "shoulder"
+	elif s.find("upperchest") != -1 or s.find("spine3") != -1 or s.find("spine03") != -1:
+		core = "upperchest"
+	elif s.find("chest") != -1 or s.find("spine2") != -1 or s.find("spine02") != -1:
+		core = "chest"
+	elif s.find("spine") != -1:
+		core = "spine"
+	elif s.find("neck") != -1:
+		core = "neck"
+	elif s.find("head") != -1:
+		core = "head"
+	elif s.find("hip") != -1 or s.find("pelvis") != -1:
+		core = "hips"
+	if core == "":
+		return ""
+	if core in _SIDED_BONES and side != "":
+		return core + "." + side
+	return core
+
+## Rebuild `src_lib` so its bone tracks target `skeleton` (reached via
+## `skel_rel_path` from the AnimationPlayer's root). Returns
+## {"lib": AnimationLibrary, "matched": int} — matched is how many distinct bones
+## were mapped, so the caller can reject a total naming mismatch.
+static func retarget_library(src_lib: AnimationLibrary, skeleton: Skeleton3D, skel_rel_path: String) -> Dictionary:
+	var canon_to_bone := {}
+	for i in range(skeleton.get_bone_count()):
+		var canon := canonical_bone(skeleton.get_bone_name(i))
+		if canon != "" and not canon_to_bone.has(canon):
+			canon_to_bone[canon] = skeleton.get_bone_name(i)
+
+	var out := AnimationLibrary.new()
+	var matched := {}
+	for anim_name in src_lib.get_animation_list():
+		var src: Animation = src_lib.get_animation(anim_name)
+		var dst := Animation.new()
+		dst.length = src.length
+		dst.loop_mode = src.loop_mode
+		var seen := {}
+		for ti in range(src.get_track_count()):
+			var ttype := src.track_get_type(ti)
+			if ttype != Animation.TYPE_POSITION_3D and ttype != Animation.TYPE_ROTATION_3D \
+					and ttype != Animation.TYPE_SCALE_3D:
+				continue
+			var path := src.track_get_path(ti)
+			if path.get_subname_count() == 0:
+				continue
+			var canon := canonical_bone(path.get_subname(0))
+			if canon == "" or not canon_to_bone.has(canon):
+				continue
+			# The library holds the same bone under several naming conventions;
+			# keep only the first (mixamo/GeneralSkeleton set carries the data).
+			var dedupe_key := "%s|%d" % [canon, ttype]
+			if seen.has(dedupe_key):
+				continue
+			seen[dedupe_key] = true
+			matched[canon] = true
+			var nt := dst.add_track(ttype)
+			dst.track_set_path(nt, NodePath(skel_rel_path + ":" + String(canon_to_bone[canon])))
+			dst.track_set_interpolation_type(nt, src.track_get_interpolation_type(ti))
+			for k in range(src.track_get_key_count(ti)):
+				dst.track_insert_key(nt, src.track_get_key_time(ti, k), src.track_get_key_value(ti, k))
+		out.add_animation(anim_name, dst)
+	return {"lib": out, "matched": matched.size()}
+
 ## Returns the world-space height of a node's combined mesh AABB.
 static func measure_height(node: Node3D) -> float:
 	var min_y := INF

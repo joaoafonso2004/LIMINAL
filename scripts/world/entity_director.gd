@@ -26,7 +26,9 @@ signal caught()                        # game over — entity touched player
 signal chase_started()
 signal chase_ended()
 
-const WATCHER_PATH := "res://assets/characters/watcher_silhouette/watcher_silhouette.glb"
+const USE_ENTITY_MODEL := false  # entity.fbx imports too small; keep the watcher for now
+const ENTITY_PATH := "res://assets/characters/entity/entity.fbx"
+const WATCHER_PATH := "res://assets/characters/watcher_silhouette/watcher_silhouette.glb"  # fallback silhouette
 const ANIM_LIB := "res://assets/characters/watcher_silhouette/watcher_silhouette_animations.tres"
 
 # All pacing/difficulty values live in scripts/tuning.gd — edit there, not here.
@@ -41,8 +43,9 @@ var _camera: Camera3D = null
 var _maze = null
 
 # runtime
-var _watcher_scene: PackedScene = null
-var _anim_lib: AnimationLibrary = null
+var _watcher_scene: PackedScene = null       # the model actually spawned (entity, or watcher fallback)
+var _anim_lib: AnimationLibrary = null        # source clips (survivor/watcher skeleton naming)
+var _fig_anim_lib: AnimationLibrary = null    # clips retargeted onto _watcher_scene's skeleton
 var _rng := RandomNumberGenerator.new()
 
 # current apparition
@@ -245,6 +248,12 @@ func investigate_noise(world_position: Vector3, audible_range: float, kind: Stri
 	elif kind == "callout":
 		_add_stress(0.02)
 		_sound_pressure = minf(1.0, _sound_pressure + 0.06)
+		# A shout in the dark rouses a dormant entity: it comes WANDERING toward
+		# the sound (never a chase from nothing — the maze still has to lead it
+		# into view). Only the director spawns/steers the shared figure; co-op
+		# clients merely mirror whatever the host broadcasts.
+		if (not _mp or _mp_host) and (_mode == "idle" or _mode == "roam"):
+			_rouse_toward(world_position)
 	if not is_instance_valid(_figure):
 		return
 	if _figure.global_position.distance_to(world_position) > audible_range:
@@ -263,16 +272,48 @@ func investigate_noise(world_position: Vector3, audible_range: float, kind: Stri
 
 func _ready() -> void:
 	_rng.randomize()
-	if ResourceLoader.exists(WATCHER_PATH):
-		_watcher_scene = load(WATCHER_PATH)
 	if ResourceLoader.exists(ANIM_LIB):
 		_anim_lib = load(ANIM_LIB)
+	_fig_anim_lib = _anim_lib
+	# The entity.fbx imported far too small (a black dot) so we stay on the proven
+	# watcher silhouette for now. Flip USE_ENTITY_MODEL to true to try the new rig
+	# again (its runtime retarget path is kept below, ready to go).
+	if USE_ENTITY_MODEL and ResourceLoader.exists(ENTITY_PATH):
+		var ent := load(ENTITY_PATH) as PackedScene
+		if ent != null:
+			var retarget := _retarget_for_scene(ent, _anim_lib)
+			if retarget != null:
+				_watcher_scene = ent
+				_fig_anim_lib = retarget
+	if _watcher_scene == null and ResourceLoader.exists(WATCHER_PATH):
+		_watcher_scene = load(WATCHER_PATH)
 	_load_sfx()
 	# Stagger personal horror so co-op clients never receive it on one frame.
 	_next_peek = 2.0
 	_next_jump = 999.0                                   # armed at JUMP_ARM_TIME
 	_next_chase = 999.0                                  # armed at CHASE_ARM_TIME
 	_next_sound = 25.0
+
+## Probe a candidate model's skeleton and rebuild the shared clips onto it.
+## Returns null (keep the old silhouette) if it has no skeleton or too few bones
+## match — better a working watcher than a T-posing entity.
+func _retarget_for_scene(scene: PackedScene, src_lib: AnimationLibrary) -> AnimationLibrary:
+	if src_lib == null:
+		return null
+	var probe := scene.instantiate()
+	if probe == null:
+		return null
+	var skeletons := probe.find_children("*", "Skeleton3D")
+	if skeletons.is_empty():
+		probe.free()
+		return null
+	var skeleton := skeletons[0] as Skeleton3D
+	var rel_path := String(probe.get_path_to(skeleton))
+	var result := ModelUtils.retarget_library(src_lib, skeleton, rel_path)
+	probe.free()
+	if int(result.get("matched", 0)) < 6:
+		return null
+	return result.get("lib") as AnimationLibrary
 
 func _load_sfx() -> void:
 	var paths := {
@@ -1610,8 +1651,8 @@ func _spawn_figure(pos: Vector3, _instant: bool) -> void:
 	# animation
 	var ap := AnimationPlayer.new()
 	model.add_child(ap)
-	if _anim_lib:
-		var lib = _anim_lib.duplicate(true) as AnimationLibrary
+	if _fig_anim_lib:
+		var lib = _fig_anim_lib.duplicate(true) as AnimationLibrary
 		ap.add_animation_library("", lib)
 		ModelUtils.set_animation_loops(ap)
 		if ap.has_animation("crawl"):
@@ -1889,8 +1930,8 @@ func _spawn_mirror() -> void:
 	_blacken(model)
 	var ap := AnimationPlayer.new()
 	model.add_child(ap)
-	if _anim_lib:
-		ap.add_animation_library("", _anim_lib)
+	if _fig_anim_lib:
+		ap.add_animation_library("", _fig_anim_lib.duplicate(true))
 		ModelUtils.set_animation_loops(ap)
 		if ap.has_animation("crawl"):
 			ap.play("crawl")
@@ -2053,10 +2094,26 @@ func _wire_peek_skeleton() -> void:
 		skeleton.skeleton_updated.connect(_on_peek_skeleton_updated.bind(skeleton))
 
 
+## A callout summons the wanderer. If nothing is roaming yet, spawn one (at an
+## unseen maze cell, like a normal roam) and point it at the sound; if it is
+## already roaming, just redirect it. The corridor path guarantees it approaches
+## through the halls instead of teleporting into view.
+func _rouse_toward(world_position: Vector3) -> void:
+	if not is_instance_valid(_figure):
+		_begin_roam()
+	if not is_instance_valid(_figure):
+		return
+	_mode = "roam"
+	_roam_target = world_position
+	if _maze and _maze.has_method("corridor_path"):
+		_roam_path = _maze.corridor_path(_cell_of(_figure.global_position), _cell_of(world_position))
+	_roam_wait = 0.0
+
+
 func _begin_roam() -> void:
 	if _figure:
 		_remove_figure()
-	
+
 	var cell := _find_random_roam_cell()
 	if cell == Vector2i(-1, -1):
 		_roam_cooldown = 5.0

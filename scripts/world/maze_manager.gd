@@ -182,11 +182,24 @@ func _load_scene(path: String) -> PackedScene:
 # ---------------------------------------------------------------------------
 # Update loop
 # ---------------------------------------------------------------------------
+## While a downed player spectates a teammate, stream around THAT teammate so the
+## map keeps generating ahead of them instead of only around the motionless body.
+var _stream_focus_active := false
+var _stream_focus_pos := Vector3.ZERO
+
+func set_stream_focus(pos: Vector3) -> void:
+	_stream_focus_active = true
+	_stream_focus_pos = pos
+
+func clear_stream_focus() -> void:
+	_stream_focus_active = false
+
 func _physics_process(delta: float) -> void:
 	_time += delta
-	if not is_instance_valid(_player):
+	if not is_instance_valid(_player) and not _stream_focus_active:
 		return
-	var pc: Vector2i = _cell_of(_player.global_position)
+	var focus: Vector3 = _stream_focus_pos if _stream_focus_active else _player.global_position
+	var pc: Vector2i = _cell_of(focus)
 	if pc != _cur_cell:
 		_cur_cell = pc
 		_stream(pc)
