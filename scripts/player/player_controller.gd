@@ -43,7 +43,6 @@ var _anim_player: AnimationPlayer
 var _cur_clip: String = ""
 var is_crouching: bool = false
 var is_sprinting: bool = false
-var is_downed: bool = false
 var is_dead: bool = false
 var is_reviving: bool = false
 var sprint_seconds: float = Tuning.SPRINT_MAX_SECONDS
