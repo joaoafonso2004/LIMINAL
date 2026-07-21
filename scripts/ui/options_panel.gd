@@ -61,17 +61,19 @@ func _build() -> void:
 		func(): return Settings.sfx_volume,
 		func(v): Settings.sfx_volume = v)
 
-	var fs := CheckButton.new()
-	fs.text = "FULLSCREEN"
-	fs.button_pressed = Settings.fullscreen
-	fs.custom_minimum_size = Vector2(380, 48)
-	fs.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
-	UIKit.style_brutalist_button(fs, 17)
-	fs.toggled.connect(func(on: bool):
-		Settings.fullscreen = on
+	var mode_btn := Button.new()
+	var mode_names := ["FULLSCREEN", "WINDOWED", "MAXIMIZED WINDOW"]
+	mode_btn.text = "DISPLAY: %s" % mode_names[posmod(Settings.window_mode, mode_names.size())]
+	mode_btn.custom_minimum_size = Vector2(380, 48)
+	mode_btn.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	UIKit.style_brutalist_button(mode_btn, 17)
+	mode_btn.pressed.connect(func():
+		Settings.window_mode = posmod(Settings.window_mode + 1, mode_names.size())
+		Settings.fullscreen = (Settings.window_mode == 0)
+		mode_btn.text = "DISPLAY: %s" % mode_names[Settings.window_mode]
 		Settings.apply_fullscreen()
 		Settings.save_settings())
-	vb.add_child(fs)
+	vb.add_child(mode_btn)
 
 	var crt := CheckButton.new()
 	crt.text = "CRT FILTER"

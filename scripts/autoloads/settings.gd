@@ -11,6 +11,7 @@ var master_volume := 1.0       # 0..1 linear
 var music_volume := 1.0
 var sfx_volume := 1.0
 var fullscreen := false
+var window_mode: int = 1       # 0: Fullscreen, 1: Windowed, 2: Maximized
 var crt_filter := true
 
 
@@ -29,6 +30,7 @@ func load_settings() -> void:
 	music_volume = clampf(float(cf.get_value("audio", "music", 1.0)), 0.0, 1.0)
 	sfx_volume = clampf(float(cf.get_value("audio", "sfx", 1.0)), 0.0, 1.0)
 	fullscreen = bool(cf.get_value("video", "fullscreen", false))
+	window_mode = int(cf.get_value("video", "window_mode", 1 if not fullscreen else 0))
 	crt_filter = bool(cf.get_value("video", "crt_filter", true))
 
 
@@ -39,6 +41,7 @@ func save_settings() -> void:
 	cf.set_value("audio", "music", music_volume)
 	cf.set_value("audio", "sfx", sfx_volume)
 	cf.set_value("video", "fullscreen", fullscreen)
+	cf.set_value("video", "window_mode", window_mode)
 	cf.set_value("video", "crt_filter", crt_filter)
 	cf.save(PATH)
 
@@ -59,8 +62,29 @@ func _apply_bus(bus_name: String, linear: float) -> void:
 
 
 func apply_fullscreen() -> void:
-	var mode := DisplayServer.window_get_mode()
-	if fullscreen and mode != DisplayServer.WINDOW_MODE_FULLSCREEN:
+	if window_mode == 0:
 		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN)
-	elif not fullscreen and mode == DisplayServer.WINDOW_MODE_FULLSCREEN:
+		DisplayServer.window_set_flag(DisplayServer.WINDOW_FLAG_BORDERLESS, false)
+	elif window_mode == 2:
+		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_MAXIMIZED)
+		DisplayServer.window_set_flag(DisplayServer.WINDOW_FLAG_BORDERLESS, false)
+	else:
+		# Actual Windowed Mode: Centered window with title bar & borders
 		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED)
+		DisplayServer.window_set_flag(DisplayServer.WINDOW_FLAG_BORDERLESS, false)
+		
+		var screen_id := DisplayServer.window_get_current_screen()
+		var screen_size := DisplayServer.screen_get_size(screen_id)
+		var target_w := 1280
+		var target_h := 720
+		if screen_size.x >= 2560 and screen_size.y >= 1440:
+			target_w = 1600
+			target_h = 900
+		elif screen_size.x >= 1920 and screen_size.y >= 1080:
+			target_w = 1440
+			target_h = 810
+
+		DisplayServer.window_set_size(Vector2i(target_w, target_h))
+		var screen_pos := DisplayServer.screen_get_position(screen_id)
+		var center_pos := screen_pos + (screen_size - Vector2i(target_w, target_h)) / 2
+		DisplayServer.window_set_position(center_pos)
