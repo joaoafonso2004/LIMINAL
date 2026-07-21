@@ -1165,9 +1165,9 @@ func _launch_chase() -> void:
 		return
 	_set_figure_alpha(1.0)
 	_face_player(_figure)
-	if is_instance_valid(_anim_player) and _anim_player.has_animation("crawl_chase"):
-		_anim_player.play("crawl_chase")
-		_anim_player.speed_scale = 2.2
+	if _fig_anim and _fig_anim.has_animation("crawl_chase"):
+		_fig_anim.play("crawl_chase")
+		_fig_anim.speed_scale = 2.2
 	else:
 		_play_anim("ual1_Sprint")
 	_chase_state = "pursue"
