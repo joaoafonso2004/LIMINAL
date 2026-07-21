@@ -105,27 +105,30 @@ static func setup_character_for_movement(node: Node3D, target_height: float = 1.
 	ground_model(node)
 	fix_character_materials(node)
 
-## Override metallic 1.0 imported materials to clean 0.0 dielectric materials so character textures never render purple.
+## Override metallic 1.0 / missing materials with clean dielectric survivor material so character textures never render purple.
 static func fix_character_materials(node: Node3D) -> void:
 	for child in node.find_children("*", "MeshInstance3D"):
 		var mi := child as MeshInstance3D
-		if mi == null or mi.mesh == null:
+		if mi == null:
 			continue
-		for surface in mi.mesh.get_surface_count():
-			var active := mi.get_active_material(surface)
-			if active == null and mi.mesh:
-				active = mi.mesh.surface_get_material(surface)
+		
+		var surf_count := mi.mesh.get_surface_count() if mi.mesh else 1
+		for surface in range(surf_count):
+			var orig: Material = mi.get_active_material(surface)
+			if orig == null and mi.mesh:
+				orig = mi.mesh.surface_get_material(surface)
 
-			var mat: BaseMaterial3D = null
-			if active is BaseMaterial3D:
-				mat = active.duplicate(true) as BaseMaterial3D
-			else:
-				mat = StandardMaterial3D.new()
+			var clean_mat := StandardMaterial3D.new()
+			clean_mat.metallic = 0.0
+			clean_mat.roughness = 0.8
+			clean_mat.metallic_specular = 0.2
+			clean_mat.albedo_color = Color(0.85, 0.78, 0.70) # Clean survivor beige/tan clothes fallback
 
-			mat.metallic = 0.0
-			mat.roughness = 0.8
-			mat.metallic_specular = 0.2
-			mi.set_surface_override_material(surface, mat)
+			if orig is BaseMaterial3D and orig.albedo_texture != null:
+				clean_mat.albedo_texture = orig.albedo_texture
+				clean_mat.albedo_color = Color(1.0, 1.0, 1.0)
+
+			mi.set_surface_override_material(surface, clean_mat)
 
 ## Apply orientation correction for Tripo models. Call ONLY if models face wrong.
 static func fix_orientation(node: Node3D, angle_degrees: float = 180.0) -> void:

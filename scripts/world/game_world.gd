@@ -1345,19 +1345,27 @@ func _tick_dead_spectator(delta: float) -> void:
 		return
 
 	# Smooth 3rd-person over-the-shoulder follow camera with wall raycast collision
-	var head_pos: Vector3 = target.global_position + Vector3.UP * 1.68
-	var cam_offset: Vector3 = (target.global_transform.basis.z * 1.85) + (target.global_transform.basis.x * 0.36) + (Vector3.UP * 0.12)
+	var head_pos: Vector3 = target.global_position + Vector3.UP * 1.62
+	var cam_offset: Vector3 = (target.global_transform.basis.z * 1.35) + (target.global_transform.basis.x * 0.42) + (Vector3.UP * 0.22)
 	var ideal_pos: Vector3 = head_pos + cam_offset
 
 	var space := get_world_3d().direct_space_state
 	var query := PhysicsRayQueryParameters3D.create(head_pos, ideal_pos, 1)
-	query.exclude = [target]
+	var exclude_nodes: Array[RID] = []
+	for child in target.find_children("*", "CollisionObject3D"):
+		var co := child as CollisionObject3D
+		if co:
+			exclude_nodes.append(co.get_rid())
+	query.exclude = exclude_nodes
+
 	var hit := space.intersect_ray(query)
-	var final_pos: Vector3 = (hit["position"] - cam_offset.normalized() * 0.15) if not hit.is_empty() else ideal_pos
+	var final_pos: Vector3 = (hit["position"] - cam_offset.normalized() * 0.2) if not hit.is_empty() else ideal_pos
 
 	var desired_basis := Transform3D().looking_at(head_pos - final_pos, Vector3.UP).basis
 	var desired := Transform3D(desired_basis, final_pos)
-	_camera.global_transform = _camera.global_transform.interpolate_with(desired, clampf(delta * 12.0, 0.0, 1.0))
+	_camera.global_transform = _camera.global_transform.interpolate_with(desired, clampf(delta * 14.0, 0.0, 1.0))
+	_camera.fov = 75.0
+	_camera.near = 0.05
 
 func _on_local_revived() -> void:
 	_is_downed = false
