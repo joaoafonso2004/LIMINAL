@@ -831,12 +831,14 @@ func _tick_peek(delta: float) -> void:
 	else:
 		request_flicker.emit(0.0)
 
-	# 100% SILENT PEEKING — No audio on gaze!
-	# Normal stealth peeks recede when looked at. Trap peeks stay staring!
+	# 100% SILENT UNCANNY PEEKING — No screech on gaze, pure psychological dread!
+	# When player turns and makes eye contact: entity locks gaze for 0.45s before receding behind wall!
 	if (visible_now or looked) and not _peek_recede:
 		if _stare_timer < 0.0:
-			_stare_timer = 0.12  # quick eye-contact reaction duration
-			_add_stress(0.10)
+			_stare_timer = 0.48  # Uncanny eye-contact stare hold duration
+			_add_stress(0.18)
+			request_dread.emit(0.45) # Surge dread vignette when eye contact lands
+			request_flicker.emit(0.18)
 		if _stare_timer > 0.0:
 			_stare_timer = maxf(0.0, _stare_timer - delta)
 		if _stare_timer <= 0.0:
@@ -845,13 +847,13 @@ func _tick_peek(delta: float) -> void:
 
 	if _peek_corner:
 		if not _peek_recede:
-			# leans out slowly (0.5s)
-			_lean = clampf(_lean + _lean_dir * delta / 0.5, 0.0, 1.0)
-			_figure.global_position = _peek_from.lerp(_peek_to, _lean * 0.75)
+			# Leans out smoothly around corner (0.4s)
+			_lean = clampf(_lean + _lean_dir * delta / 0.4, 0.0, 1.0)
+			_figure.global_position = _peek_from.lerp(_peek_to, _lean * 0.40)
 			_face_player(_figure)
-			_set_figure_alpha(clampf(_lean * 2.0, 0.0, 1.0))
+			_set_figure_alpha(clampf(_lean * 2.5, 0.0, 1.0))
 		
-		# Auto-recede after timer runs out
+		# Auto-recede after hold timer runs out
 		if _peek_timer <= 0.0 and not _peek_recede:
 			_peek_recede = true
 			_lean_dir = -1.0
@@ -859,12 +861,12 @@ func _tick_peek(delta: float) -> void:
 	if _peek_recede:
 		if _peek_corner:
 			_lean_dir = -1.0
-			# Smooth stealthy duck back behind wall (0.35s sweet spot)
-			_lean = clampf(_lean + _lean_dir * delta / 0.35, 0.0, 1.0)
-			_figure.global_position = _peek_from.lerp(_peek_to, _lean * 0.75)
+			# Smooth stealthy duck back behind wall corner (0.32s)
+			_lean = clampf(_lean + _lean_dir * delta / 0.32, 0.0, 1.0)
+			_figure.global_position = _peek_from.lerp(_peek_to, _lean * 0.40)
 			_face_player(_figure)
-			# Stay visible while pulling back behind cover, then fade out
-			var alpha_val := 1.0 if _lean > 0.1 else 0.0
+			# Stay visible while pulling back behind cover, then vanish
+			var alpha_val := 1.0 if _lean > 0.08 else 0.0
 			_set_figure_alpha(alpha_val)
 			
 			if _lean <= 0.0:
