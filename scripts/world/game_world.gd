@@ -1407,14 +1407,36 @@ func _tick_dead_spectator(delta: float) -> void:
 	if not is_instance_valid(target):
 		return
 
-	# Smooth 3rd-person over-the-shoulder follow camera with wall raycast collision
-	var head_pos: Vector3 = target.global_position + Vector3.UP * 1.62
-	var cam_offset: Vector3 = (target.global_transform.basis.z * 1.35) + (target.global_transform.basis.x * 0.42) + (Vector3.UP * 0.22)
+	# Smooth 1st/3rd-person follow camera with wall raycast collision
+	var spectate_mode_1st: bool = get_meta("spectate_first_person", false)
+	if Input.is_physical_key_pressed(KEY_C):
+		if not get_meta("spectate_c_latched", false):
+			set_meta("spectate_c_latched", true)
+			spectate_mode_1st = not spectate_mode_1st
+			set_meta("spectate_first_person", spectate_mode_1st)
+	else:
+		set_meta("spectate_c_latched", false)
+
+	var head_pos: Vector3 = target.global_position + Vector3.UP * 1.55
+	if spectate_mode_1st:
+		_camera.global_position = _camera.global_position.lerp(head_pos, clampf(delta * 16.0, 0.0, 1.0))
+		var target_rot_y := target.rotation.y
+		_camera.rotation.y = lerp_angle(_camera.rotation.y, target_rot_y, clampf(delta * 16.0, 0.0, 1.0))
+		_camera.rotation.x = lerp_angle(_camera.rotation.x, 0.0, clampf(delta * 10.0, 0.0, 1.0))
+		_camera.fov = 75.0
+		_camera.near = 0.05
+		return
+
+	var cam_offset: Vector3 = (target.global_transform.basis.z * 1.25) + (target.global_transform.basis.x * 0.38) + (Vector3.UP * 0.25)
 	var ideal_pos: Vector3 = head_pos + cam_offset
 
 	var space := get_world_3d().direct_space_state
 	var query := PhysicsRayQueryParameters3D.create(head_pos, ideal_pos, 1)
 	var exclude_nodes: Array[RID] = []
+	if target is CollisionObject3D:
+		exclude_nodes.append((target as CollisionObject3D).get_rid())
+	if is_instance_valid(_player) and _player is CollisionObject3D:
+		exclude_nodes.append((_player as CollisionObject3D).get_rid())
 	for child in target.find_children("*", "CollisionObject3D"):
 		var co := child as CollisionObject3D
 		if co:
@@ -1422,7 +1444,13 @@ func _tick_dead_spectator(delta: float) -> void:
 	query.exclude = exclude_nodes
 
 	var hit := space.intersect_ray(query)
-	var final_pos: Vector3 = (hit["position"] - cam_offset.normalized() * 0.2) if not hit.is_empty() else ideal_pos
+	var final_pos: Vector3 = ideal_pos
+	if not hit.is_empty():
+		var hit_pos: Vector3 = hit["position"]
+		if hit_pos.distance_to(head_pos) > 0.35:
+			final_pos = hit_pos - cam_offset.normalized() * 0.18
+		else:
+			final_pos = head_pos
 
 	var desired_basis := Transform3D().looking_at(head_pos - final_pos, Vector3.UP).basis
 	var desired := Transform3D(desired_basis, final_pos)
