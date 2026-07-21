@@ -724,7 +724,12 @@ func _begin_peek() -> void:
 		_spawn_figure(corner["hide"], false)
 		if _figure:
 			_face_player(_figure)
-			_play_anim("ual1_Idle")
+			var peek_dir: Vector3 = (corner["out"] - corner["hide"]).normalized()
+			var right: Vector3 = _figure.global_transform.basis.x
+			if right.dot(peek_dir) < 0.0:
+				_play_anim("lean_left")
+			else:
+				_play_anim("lean_right")
 			_set_figure_alpha(0.0)  # Start invisible — only the head peek reveals it
 		_peek_corner = true
 		_peek_from = corner["hide"]
@@ -2049,7 +2054,7 @@ func _begin_roam() -> void:
 		
 	_set_figure_alpha(1.0)
 	_face_player(_figure)
-	_play_anim("ual1_Walk")
+	_play_anim("crawl")
 	_mode = "roam"
 	_roam_target = spot
 	_roam_path = []
@@ -2092,7 +2097,7 @@ func _roam_move(delta: float, dist_to_player: float) -> void:
 		
 	if _roam_target == Vector3.ZERO or _figure.global_position.distance_to(_roam_target) < 0.6:
 		_roam_wait -= delta
-		_play_anim("ual1_Idle")
+		_play_anim("crouch_idle")
 		if _roam_wait <= 0.0:
 			var cell := _find_random_roam_cell()
 			if cell != Vector2i(-1, -1) and _maze:
@@ -2101,7 +2106,7 @@ func _roam_move(delta: float, dist_to_player: float) -> void:
 				_roam_wait = _rng.randf_range(1.5, 3.5)
 		return
 		
-	_play_anim("ual1_Walk")
+	_play_anim("crawl")
 	var target := _roam_target
 	if _roam_path.size() >= 2:
 		target = _maze.world_center(_roam_path[1])
