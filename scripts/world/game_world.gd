@@ -1022,8 +1022,7 @@ func _on_net_message(type: String, msg: Dictionary, from_player: int) -> void:
 				if is_instance_valid(collector) and not _remote_down.has(sender_id):
 					_snus.host_collect_id(int(msg.get("id", -1)), collector.global_position)
 		"snus":
-			var snus_author := int(msg.get("from", from_player))
-			if snus_author == 0 and _snus and _snus.has_method("remote_collect"):
+			if _snus and _snus.has_method("remote_collect"):
 				_snus.remote_collect(int(msg.get("id", -1)))
 		"phone_request":
 			if NetManager.is_host:
@@ -1152,9 +1151,9 @@ func _resolve_sender_id(msg: Dictionary, from_player: int) -> int:
 
 func _on_player_disconnected(pid: int) -> void:
 	var rp = _remote_players.get(pid)
-	if rp and is_instance_valid(rp):
-		if rp.has_method("set_dead"):
-			rp.set_dead(true)
+	if is_instance_valid(rp):
+		rp.queue_free()
+	_remote_players.erase(pid)
 	if pid >= 0:
 		_remote_down[pid] = true
 		if _dead_spectator and pid == _spectate_target_id:

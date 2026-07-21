@@ -10,7 +10,7 @@ signal all_collected()
 
 const TOTAL := 5
 const CELL := 4.0                 # must match maze_manager CELL
-const PICKUP_RANGE := 2.2
+const PICKUP_RANGE := 3.2
 # Tins beyond the streamed-wall horizon (VIEW_RADIUS 6 cells ≈ 24 m) would
 # float visibly in the unbuilt void — cap their visibility safely inside it.
 const VISIBLE_RANGE := 34.0   # walls now stream to 48 m — keep tins inside that horizon
@@ -321,7 +321,7 @@ func host_collect_id(id: int, collector_position: Vector3) -> bool:
 	if not is_instance_valid(box):
 		return false
 	var flat_delta := Vector2(box.global_position.x - collector_position.x, box.global_position.z - collector_position.z)
-	if flat_delta.length() > PICKUP_RANGE + 0.8:
+	if flat_delta.length() > PICKUP_RANGE + 1.2:
 		return false
 	_do_collect(id, true)
 	return true

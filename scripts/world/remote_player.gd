@@ -141,21 +141,8 @@ func _apply_player_tint(model: Node3D) -> void:
 	set_meta("player_tint", tint)
 
 
-func _setup_overhead_tag(tint: Color) -> void:
-	if has_node("OverheadTag"):
-		return
-	var label := Label3D.new()
-	label.name = "OverheadTag"
-	label.text = "P%02d" % (player_id + 1)
-	label.font_size = 32
-	label.pixel_size = 0.003
-	label.position = Vector3(0, 2.05, 0)
-	label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-	label.modulate = tint
-	label.outline_render_priority = 10
-	label.outline_size = 8
-	label.outline_modulate = Color(0, 0, 0, 0.9)
-	add_child(label)
+func _setup_overhead_tag(_tint: Color) -> void:
+	pass
 
 
 ## Build a dim capsule so a body is always visible even without the GLB.
