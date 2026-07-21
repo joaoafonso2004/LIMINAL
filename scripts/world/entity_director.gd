@@ -1646,8 +1646,19 @@ func _blacken(model: Node3D) -> void:
 	_fig_silh_mats = [mat]
 
 func _play_anim(name: String) -> void:
-	if _fig_anim and _fig_anim.has_animation(name):
-		_fig_anim.play(name)
+	if _fig_anim == null:
+		return
+	if _fig_anim.has_animation(name):
+		if _fig_anim.current_animation != name:
+			_fig_anim.play(name, 0.2)
+			if name == "crawl":
+				_fig_anim.speed_scale = 1.0
+			elif name == "crawl_chase":
+				_fig_anim.speed_scale = 2.2
+	elif name == "crawl" and _fig_anim.has_animation("crawl_chase"):
+		if _fig_anim.current_animation != "crawl_chase":
+			_fig_anim.play("crawl_chase", 0.2)
+			_fig_anim.speed_scale = 0.7
 
 func _face_player(fig: Node3D) -> void:
 	if not is_instance_valid(fig) or not is_instance_valid(_player):
