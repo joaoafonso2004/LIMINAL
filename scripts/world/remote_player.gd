@@ -124,31 +124,7 @@ func _setup_model(model: Node3D) -> void:
 
 
 func _apply_player_tint(model: Node3D) -> void:
-	# Keep natural GLB character textures intact so model never renders purple.
-	# Metallic dielectric fix to prevent void black/purple reflections:
-	for child in model.find_children("*", "MeshInstance3D"):
-		var mi := child as MeshInstance3D
-		if mi == null or mi.mesh == null:
-			continue
-		for surface in mi.mesh.get_surface_count():
-			var active := mi.get_active_material(surface)
-			if active == null and mi.mesh:
-				active = mi.mesh.surface_get_material(surface)
-
-			var mat: BaseMaterial3D = null
-			if active is BaseMaterial3D:
-				mat = active.duplicate(true) as BaseMaterial3D
-			else:
-				mat = StandardMaterial3D.new()
-
-			mat.metallic = 0.0
-			mat.roughness = 0.82
-			mat.specular = 0.25
-			# Guard against broken magenta/purple texture fallbacks
-			if mat.albedo_color.r > 0.4 and mat.albedo_color.b > 0.4 and mat.albedo_color.g < 0.25:
-				mat.albedo_color = Color(0.82, 0.78, 0.72)
-			mi.set_surface_override_material(surface, mat)
-
+	ModelUtils.fix_character_materials(model)
 	var tint: Color = PLAYER_TINTS[posmod(player_id, PLAYER_TINTS.size())]
 	_setup_overhead_tag(tint)
 	set_meta("player_tint", tint)
