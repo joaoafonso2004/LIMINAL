@@ -35,14 +35,7 @@ vec2 curve(vec2 uv) {
 }
 
 void fragment() {
-	vec2 raw_uv = curve(SCREEN_UV);
-	vec2 uv = clamp(raw_uv, vec2(0.001), vec2(0.999));
-
-	// Outside CRT curvature glass bounds -> solid black CRT frame
-	if (raw_uv.x < 0.0 || raw_uv.x > 1.0 || raw_uv.y < 0.0 || raw_uv.y > 1.0) {
-		COLOR = vec4(0.0, 0.0, 0.0, 1.0);
-		return;
-	}
+	vec2 uv = curve(SCREEN_UV);
 
 	// --- VHS tracking tear: a thin band that yanks rows sideways sometimes ---
 	float band_seed = floor(TIME * 2.0);
@@ -50,13 +43,12 @@ void fragment() {
 	float band_y = fract(hash21(vec2(band_seed, 3.0)) + TIME * 0.07);
 	float band = smoothstep(0.014, 0.0, abs(uv.y - band_y)) * band_on;
 	uv.x += band * (hash21(vec2(TIME * 60.0, uv.y * 240.0)) - 0.5) * 0.09;
-	uv = clamp(uv, vec2(0.001), vec2(0.999));
 
 	// --- Chromatic aberration: worse as the signal sickens ---
 	float ab = ABERRATION_BASE + dread * 0.0026 + pulse * 0.004;
-	float r = texture(screen_tex, clamp(uv + vec2(ab, 0.0), vec2(0.001), vec2(0.999))).r;
+	float r = texture(screen_tex, uv + vec2(ab, 0.0)).r;
 	float g = texture(screen_tex, uv).g;
-	float b = texture(screen_tex, clamp(uv - vec2(ab, 0.0), vec2(0.001), vec2(0.999))).b;
+	float b = texture(screen_tex, uv - vec2(ab, 0.0)).b;
 	vec3 col = vec3(r, g, b);
 
 	// --- Drained fluorescent colour; shadows remain crushed black ---
