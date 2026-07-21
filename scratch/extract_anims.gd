@@ -147,29 +147,30 @@ func _init():
 								var time := clip.track_get_key_time(track_idx, k)
 								var val = clip.track_get_key_value(track_idx, k)
 
-								if (mapped_subname == "Hips" or unreal_subname == "pelvis") and track_type == Animation.TYPE_POSITION_3D:
-									var pos = val as Vector3
-									if key == "downed" or key == "dead":
-										if pos.y > 0.6:
-											pos.y -= 0.98
-										pos.y = clampf(pos.y, 0.08, 0.25)
-										pos.x = 0.0
-										pos.z = 0.0
-									elif key == "crawl_down":
-										pos.y = clampf(pos.y, 0.10, 0.22)
-										pos.x = 0.0
-										pos.z = 0.0
-									elif key == "revive" or key == "revive_get_up":
-										pos.x = 0.0
-										pos.z = 0.0
-									val = pos
+								var val3 = val
+								if unreal_subname == "pelvis":
+									if track_type == Animation.TYPE_POSITION_3D:
+										var pos = val as Vector3
+										if key == "downed" or key == "dead" or key == "crawl_down":
+											pos.y = 0.42
+											pos.x = 0.0
+											pos.z = 0.0
+										elif key == "revive" or key == "revive_get_up":
+											pos.x = 0.0
+											pos.z = 0.0
+										val = pos
+										val3 = pos
+									elif track_type == Animation.TYPE_ROTATION_3D:
+										if key in ["downed", "crawl_down", "crawl"]:
+											var q = val as Quaternion
+											val3 = q * Quaternion(Vector3.UP, deg_to_rad(-90))
 
 								new_clip.track_insert_key(t1_idx, time, val)
 								new_clip.track_insert_key(t2_idx, time, val)
 								# For player.fbx Game_engine/Skeleton3D, do NOT insert position keyframe on pelvis for standing clips,
 								# so the character stands 100% upright on their feet without lying flat on the floor!
 								if not (unreal_subname == "pelvis" and track_type == Animation.TYPE_POSITION_3D and not (key in ["downed", "dead", "crawl_down", "revive", "revive_get_up"])):
-									new_clip.track_insert_key(t3_idx, time, val)
+									new_clip.track_insert_key(t3_idx, time, val3)
 
 						var target_key: String = String(key)
 						if anim_lib.has_animation(target_key):
