@@ -269,7 +269,7 @@ func _ready() -> void:
 		_anim_lib = load(ANIM_LIB)
 	_load_sfx()
 	# Stagger personal horror so co-op clients never receive it on one frame.
-	_next_peek = Tuning.PEEK_FIRST_SIGHTING + _rng.randf_range(-5.0, 9.0)
+	_next_peek = 2.0
 	_next_jump = 999.0                                   # armed at JUMP_ARM_TIME
 	_next_chase = 999.0                                  # armed at CHASE_ARM_TIME
 	_next_sound = 25.0
@@ -787,14 +787,7 @@ func _dread_scaled_peek_gap() -> float:
 	var t := 0.0
 	if has_node("/root/GameManager"):
 		t = GameManager.run_time
-	var run_phase := clampf(t / Tuning.FINAL_PHASE_TIME, 0.0, 1.0)
-	var base_gap := lerpf(Tuning.PEEK_GAP_EARLY, Tuning.PEEK_GAP_LATE, run_phase)
-	# SNUS makes the entity more dangerous through chases and jumps, not by
-	# turning the corner watcher into repetitive visual spam.
-	var menace_scale := lerpf(1.0, 0.95, _menace)
-	var recovery_scale := 1.0 + _stress * 0.35
-	var gap := base_gap * menace_scale * recovery_scale * _rng.randf_range(0.85, 1.25)
-	return t + maxf(22.0, gap)
+	return t + 2.5
 
 func _tick_peek(delta: float) -> void:
 	if not is_instance_valid(_figure):

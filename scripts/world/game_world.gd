@@ -957,10 +957,6 @@ func _prepare_run_spawn_cells() -> void:
 func _run_spawn_position(player_id: int) -> Vector3:
 	if _run_spawn_cells.is_empty():
 		return Vector3(float(player_id) * 1.4, 0.1, 0.0)
-	var separated := _is_mp and bool(NetManager.rule("separated_spawns", true))
-	if separated:
-		var cell: Vector2i = _run_spawn_cells[posmod(player_id, _run_spawn_cells.size())]
-		return _maze.world_center(cell) + Vector3.UP * 0.1
 	var grouped_offsets: Array[Vector3] = [
 		Vector3.ZERO, Vector3(1.2, 0, 0), Vector3(-1.2, 0, 0), Vector3(0, 0, 1.2),
 	]
