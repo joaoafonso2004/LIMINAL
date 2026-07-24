@@ -16,7 +16,7 @@ uniform float pulse : hint_range(0.0, 1.0) = 0.0;
 const float CURVATURE = 0.035;         // subtle realistic CRT barrel glass curvature
 const float ABERRATION_BASE = 0.0007;  // subtle RGB lens split
 const float SCANLINE_BASE = 0.05;      // scanline texture
-const float SNOW_BASE = 0.012;          // TV snow amount at rest
+const float SNOW_BASE = 0.0035;         // restrained analogue grain at rest
 const float SHADOW_GAMMA = 1.06;        // cinematic deep shadows
 const vec3 PHOSPHOR_TINT = vec3(0.99, 1.0, 0.91); // yellow-green analog phosphor
 
@@ -39,7 +39,8 @@ void fragment() {
 
 	// --- VHS tracking tear: a thin band that yanks rows sideways sometimes ---
 	float band_seed = floor(TIME * 2.0);
-	float band_on = step(0.86 - dread * 0.2 - pulse * 0.55, hash21(vec2(band_seed, 7.0)));
+	float band_on = step(0.91 - dread * 0.08 - pulse * 0.30,
+		hash21(vec2(band_seed, 7.0)));
 	float band_y = fract(hash21(vec2(band_seed, 3.0)) + TIME * 0.07);
 	float band = smoothstep(0.014, 0.0, abs(uv.y - band_y)) * band_on;
 	uv.x += band * (hash21(vec2(TIME * 60.0, uv.y * 240.0)) - 0.5) * 0.09;
@@ -69,7 +70,7 @@ void fragment() {
 
 	// --- TV snow: constant, thicker when something is wrong ---
 	float n = hash21(uv * vec2(640.0, 360.0) + fract(TIME) * 91.7);
-	col += (n - 0.5) * (SNOW_BASE + dread * 0.1 + pulse * 0.12 + band * 0.5);
+	col += (n - 0.5) * (SNOW_BASE + dread * 0.025 + pulse * 0.05 + band * 0.16);
 
 	// --- Vignette + curved-glass border (heavy — the corners belong to it) ---
 	float d = distance(uv, vec2(0.5));

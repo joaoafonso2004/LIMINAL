@@ -1,13 +1,25 @@
 ; Engine configuration file.
+; It's best edited using the editor UI and not directly,
+; since the parameters that go here are not all obvious.
+;
+; Format:
+;   [section] ; section goes between []
+;   param=value ; assign values to parameters
+
 config_version=5
 
 [application]
 
-config/name="LIMINAL"
+config/name="LIMINAL (4.3)"
 config/version="0.2.1"
 run/main_scene="res://scenes/main.tscn"
 config/features=PackedStringArray("4.3", "Forward Plus")
 boot_splash/bg_color=Color(0, 0, 0, 1)
+config/icon="res://assets/ui/liminal_app_icon.png"
+
+[audio]
+
+driver/output_latency.web=100
 
 [autoload]
 
@@ -18,16 +30,44 @@ GameManager="*res://scripts/autoloads/game_manager.gd"
 NetManager="*res://scripts/autoloads/net_manager.gd"
 TesanaWorldEditor="*res://addons/tesana_world_editor/scene_export.gd"
 
-[audio]
-
-general/default_playback_type.web=1
-driver/output_latency.web=100
-
 [display]
 
 window/size/viewport_width=1920
 window/size/viewport_height=1080
 window/stretch/mode="canvas_items"
+
+[importer_defaults]
+
+texture={
+"compress/channel_pack": 0,
+"compress/hdr_compression": 1,
+"compress/lossy_quality": 0.75,
+"compress/mode": 1,
+"compress/normal_map": 0,
+"detect_3d/compress_to": 1,
+"mipmaps/generate": false,
+"mipmaps/limit": -1,
+"process/fix_alpha_border": true,
+"process/hdr_as_srgb": false,
+"process/hdr_clamp_exposure": false,
+"process/normal_map_invert_y": false,
+"process/premult_alpha": false,
+"process/size_limit": 1024,
+"roughness/mode": 0
+}
+sample={
+"compress/mode": 1,
+"edit/loop_begin": 0,
+"edit/loop_end": -1,
+"edit/loop_mode": 0,
+"edit/normalize": false,
+"edit/trim": false,
+"force/8_bit": false,
+"force/max_rate": true,
+"force/max_rate_hz": 22050,
+"force/max_rate_mode": 0,
+"force/mono": false
+}
 
 [input]
 
@@ -75,14 +115,7 @@ callout={
 [rendering]
 
 renderer/rendering_method="gl_compatibility"
-anti_aliasing/quality/msaa_3d=2
-anti_aliasing/quality/msaa_2d=0
 limits/opengl/max_renderable_lights=64
 limits/opengl/max_lights_per_object=16
-
-
+anti_aliasing/quality/msaa_3d=2
 textures/default_texture_filter=3
-[importer_defaults]
-
-texture={"compress/mode": 1, "compress/lossy_quality": 0.75, "compress/hdr_compression": 1, "compress/normal_map": 0, "compress/channel_pack": 0, "mipmaps/generate": false, "mipmaps/limit": -1, "roughness/mode": 0, "process/fix_alpha_border": true, "process/premult_alpha": false, "process/normal_map_invert_y": false, "process/hdr_as_srgb": false, "process/hdr_clamp_exposure": false, "process/size_limit": 1024, "detect_3d/compress_to": 1}
-sample={"force/8_bit": false, "force/mono": false, "force/max_rate": true, "force/max_rate_hz": 22050, "force/max_rate_mode": 0, "edit/trim": false, "edit/normalize": false, "edit/loop_mode": 0, "edit/loop_begin": 0, "edit/loop_end": -1, "compress/mode": 1}

@@ -184,7 +184,7 @@ func _build_mp_column() -> void:
 	UIKit.style_brutalist_button(_modifier_menu, 15)
 	rules_row.add_child(_modifier_menu)
 	var popup := _modifier_menu.get_popup()
-	for entry in [[0, "NO LOCKERS"], [1, "ONE LIFE"], [2, "SPAWN TOGETHER"], [3, "NO MIMIC"], [4, "NO SPRINT"], [5, "DARKER"]]:
+	for entry in [[0, "NO LOCKERS"], [1, "ONE LIFE"], [2, "SPAWN TOGETHER"], [4, "NO SPRINT"], [5, "DARKER"]]:
 		popup.add_check_item(entry[1], entry[0])
 	popup.id_pressed.connect(_on_modifier_pressed)
 
@@ -369,7 +369,6 @@ func _on_modifier_pressed(id: int) -> void:
 		0: _custom_rules["lockers"] = not bool(_custom_rules.get("lockers", true))
 		1: _custom_rules["one_life"] = not bool(_custom_rules.get("one_life", false))
 		2: _custom_rules["separated_spawns"] = not bool(_custom_rules.get("separated_spawns", true))
-		3: _custom_rules["mimic"] = not bool(_custom_rules.get("mimic", true))
 		4: _custom_rules["sprint"] = not bool(_custom_rules.get("sprint", true))
 		5: _custom_rules["darkness"] = 1.0 if float(_custom_rules.get("darkness", 1.0)) > 1.0 else 1.35
 	_custom_rules["preset"] = "custom"
@@ -383,7 +382,6 @@ func _update_modifier_checks() -> void:
 	popup.set_item_checked(popup.get_item_index(0), not bool(_custom_rules.get("lockers", true)))
 	popup.set_item_checked(popup.get_item_index(1), bool(_custom_rules.get("one_life", false)))
 	popup.set_item_checked(popup.get_item_index(2), not bool(_custom_rules.get("separated_spawns", true)))
-	popup.set_item_checked(popup.get_item_index(3), not bool(_custom_rules.get("mimic", true)))
 	popup.set_item_checked(popup.get_item_index(4), not bool(_custom_rules.get("sprint", true)))
 	popup.set_item_checked(popup.get_item_index(5), float(_custom_rules.get("darkness", 1.0)) > 1.0)
 

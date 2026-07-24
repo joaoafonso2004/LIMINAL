@@ -137,9 +137,11 @@ func _apply_shader_params() -> void:
 	if _mat == null:
 		return
 	if "crt_filter" in Settings and not Settings.crt_filter:
-		_fx.material = null
+		if _fx.material != null:
+			_fx.material = null
 	else:
-		_fx.material = _mat
+		if _fx.material != _mat:
+			_fx.material = _mat
 		_mat.set_shader_parameter("dread", clampf(_dread_cur, 0.0, 1.0))
 		_mat.set_shader_parameter("pulse", clampf(_pulse, 0.0, 1.0))
 

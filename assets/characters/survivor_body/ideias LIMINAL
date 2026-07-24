@@ -1,0 +1,23 @@
+O que já te diferencia e vale a pena amplificar: o SNUS como risco/recompensa (progredir = enfurecer a entity), o co-op de spawn separado + grito para se encontrarem, e o sistema psicológico (look-back alimenta o medo, dread, alucinações). Ideias que assentam nesses pilares:
+
+Aprofundar o risco/recompensa do SNUS
+
+O último SNUS é uma armadilha — ao apanhar o 5.º, a entity entra num "estado de caçada final" curto e intenso (já tens _final_phase); anuncia-o com um sinal claro (luzes a morrer, hum a subir) para o pânico de "temos de sair JÁ".
+SNUS partilhado, perigo partilhado — quem apanha sobe a menace para todos. Isto cria tensão social em co-op: "não apanhes já, ainda não estamos juntos!". Já tens a base (menace partilhada) — reforça com UI/áudio que mostre a alguém que outro apanhou.
+Co-op interdependente (o teu maior diferenciador)
+3. Reviver tem custo/ruído — reviver um colega emite ruído que atrai a entity (mini risco/recompensa), reforçando o grito e a coordenação.
+4. Voz posicional degradada — quando downed, a tua "voz"/grito fica abafado e distorcido consoante a distância; obriga a triangular pelo som (encaixa no teu play_sfx_3d).
+5. Papéis emergentes — um jogador pode "marcar" um canto seguro (deixar um sinal no mapa determinístico) que os outros veem — cooperação sem chat de voz.
+
+Explorar o sistema psicológico (poucos Backrooms fazem isto)
+6. A entity aprende os teus hábitos — se olhas muito para trás, ela usa mais peeks nas tuas costas; se corres, mais chases. Já tens look_back_count e menace — liga o estilo de susto ao comportamento do jogador.
+7. Alucinações de co-op — vês um "colega" ao fundo que afinal é a entity (mimic já existe!). Amplia o mimic para imitar nomes/movimentos de colegas reais.
+8. Falsos SNUS / falsas saídas — objetos que parecem o objetivo mas são iscos que disparam um peek/jump. Joga com a ganância.
+
+Variedade sem quebrar o labirinto determinístico
+9. "Salas âncora" raras — mantendo a regra de o layout ser função pura das coordenadas, injeta salas especiais determinísticas (uma sala de água, uma totalmente escura que força a lanterna, um corredor que "respira") como marcos memoráveis.
+10. Estados do mundo por dread — a partir de certos níveis de dread, o mundo muda coerentemente (paredes com sangue, zumbido, luzes) — transformação psicológica do espaço, não só do inimigo.
+
+Contra-jogo (dá agência ao jogador)
+11. Distrações — atirar um SNUS/lata para fazer barulho e desviar a entity (risco: gastas recurso). Dá decisões táticas.
+12. Esconder tem regras claras — os lockers já existem; adiciona tensão de "prender a respiração" (a entity ouve-te se te mexeres/respiras) — mecânica ativa em vez de esconder passivo.

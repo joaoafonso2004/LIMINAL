@@ -31,8 +31,8 @@ func default_rules() -> Dictionary:
 	return {
 		"preset": "normal", "entity_speed": 1.0, "darkness": 1.0,
 		"phone_traps": Tuning.PHONE_TRAP_PERCENT, "lockers": true,
-		"one_life": false, "separated_spawns": true, "mimic": true,
-		"sprint": true, "revive_seconds": 30.0,
+		"one_life": false, "separated_spawns": true,
+		"sprint": true, "revive_seconds": 90.0,
 	}
 
 func configure_rules(rules: Dictionary) -> void:
@@ -100,9 +100,12 @@ func create_room(player_count: int = 2) -> void:
 		http.queue_free()
 		room_error.emit("Could not reach the lobby server.")
 
+var _connect_timeout: float = 0.0
+
 func connect_to_room(code: String) -> void:
 	room_code = code
 	_joined_ok = false
+	_connect_timeout = 8.0
 	_ws = WebSocketPeer.new()
 	if _ws.connect_to_url(get_server_base_url() + "/ws/room/" + code) != OK:
 		_ws = null
@@ -130,7 +133,14 @@ func _process(delta: float) -> void:
 	if not _ws: return
 	_ws.poll()
 	var state = _ws.get_ready_state()
-	if state == WebSocketPeer.STATE_OPEN:
+	if state == WebSocketPeer.STATE_CONNECTING:
+		_connect_timeout -= delta
+		if _connect_timeout <= 0.0:
+			_ws.close()
+			_ws = null
+			room_error.emit("Connection timed out — check the room code and try again.")
+			return
+	elif state == WebSocketPeer.STATE_OPEN:
 		_ping_timer += delta
 		if _ping_timer >= PING_INTERVAL:
 			_ping_timer = 0.0
@@ -149,6 +159,16 @@ func _process(delta: float) -> void:
 					elif msg.has("max"):
 						max_players = int(msg.get("max", max_players))
 					player_joined.emit(local_player_id, connected_players)
+					if connected_players >= max_players:
+						all_players_joined.emit()
+				"player_joined":
+					var joined_id = msg.get("player_id", -1)
+					connected_players = msg.get("total", connected_players + 1)
+					if msg.has("max_players"):
+						max_players = int(msg.get("max_players", max_players))
+					elif msg.has("max"):
+						max_players = int(msg.get("max", max_players))
+					player_joined.emit(joined_id, connected_players)
 					if connected_players >= max_players:
 						all_players_joined.emit()
 				"player_disconnected":

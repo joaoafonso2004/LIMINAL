@@ -26,13 +26,34 @@ const ANOMALY_ZONES := [
 	{"center": Vector2i(10, 9), "kind": "dead_light"},
 	{"center": Vector2i(-9, -10), "kind": "repetition"},
 ]
-const PAMPHLETS := [
-	{"cell": Vector2i(-7, 7), "floor": false, "text": "DO NOT FOLLOW YOUR OWN FOOTSTEPS.\n\nIf the echo answers before you move, stop.\nIt has learned your rhythm."},
-	{"cell": Vector2i(9, 4), "floor": true, "text": "EMPLOYEE 04 NEVER CLOCKED OUT.\n\nHis card still registers every morning.\nThere is no employee 04."},
-	{"cell": Vector2i(-11, -7), "floor": false, "text": "THE LIGHTS ARE COUNTING BACKWARDS.\n\nI wrote down the pattern. The last number\nis always the room I am standing in."},
-	{"cell": Vector2i(6, -11), "floor": true, "text": "IF HE LOOKS LIKE ME, ASK HIM TO CALL OUT.\n\nIt can copy a face. It never gets\nthe distance of a voice right."},
-	{"cell": Vector2i(1, 12), "floor": false, "text": "LEVEL 0 — MAINTENANCE DENIED.\n\nThe request came back signed by someone\nwho disappeared three years ago."},
-	{"cell": Vector2i(12, -3), "floor": true, "text": "TAPE 01 WAS NOT RECORDED HERE.\n\nThe room on the tape does not exist.\nThe voice still knows this floor."},
+const PAMPHLET_LOCATIONS := [
+	{"cell": Vector2i(-7, 7), "floor": false},
+	{"cell": Vector2i(9, 4), "floor": true},
+	{"cell": Vector2i(-11, -7), "floor": false},
+	{"cell": Vector2i(6, -11), "floor": true},
+	{"cell": Vector2i(1, 12), "floor": false},
+	{"cell": Vector2i(12, -3), "floor": true},
+	{"cell": Vector2i(-4, -12), "floor": false},
+	{"cell": Vector2i(-13, 8), "floor": true},
+	{"cell": Vector2i(8, 11), "floor": false},
+	{"cell": Vector2i(11, -9), "floor": true},
+]
+
+const ADVICE_TEXTS := [
+	"Don't let it see you",
+	"It's faster than humans",
+	"If the phone rings, don't answer if he is close",
+	"Listen for heavy footsteps before rounding corners",
+	"5 to escape",
+	"It hates noise",
+]
+
+const ALL_PHOTOS := [
+	"res://assets/images/foto_1.png",
+	"res://assets/images/foto_2.png",
+	"res://assets/images/foto_3.png",
+	"res://assets/images/foto_4.png",
+	"res://assets/images/foto_5.png",
 ]
 
 var _player: Node3D
@@ -68,7 +89,8 @@ func _process(_delta: float) -> void:
 	if is_instance_valid(_cassette):
 		_cassette.rotation.y += 0.012
 	if is_instance_valid(_blood_root) and is_instance_valid(_player):
-		_blood_root.visible = _player.global_position.distance_to(_blood_root.global_position) <= BLOOD_VISIBLE_DISTANCE
+		_blood_root.visible = _player.global_position.distance_squared_to( \
+			_blood_root.global_position) <= BLOOD_VISIBLE_DISTANCE * BLOOD_VISIBLE_DISTANCE
 	_tick_anomaly_zone()
 
 func _world(cell: Vector2i) -> Vector3:
@@ -185,15 +207,54 @@ func _spawn_cassette() -> void:
 	_cassette.add_child(glow)
 
 func _spawn_breaker() -> void:
-	pass
-
 func _spawn_pamphlets() -> void:
-	for index in PAMPHLETS.size():
-		var spec: Dictionary = PAMPHLETS[index]
+	var rng := RandomNumberGenerator.new()
+	rng.seed = _run_seed ^ 0x4E4F5445
+
+	# 1. Pick 5 location candidates out of the available map locations
+	var available_locations := PAMPHLET_LOCATIONS.duplicate()
+	available_locations.shuffle()
+	var selected_locations: Array[Dictionary] = []
+	for i in range(min(5, available_locations.size())):
+		selected_locations.append(available_locations[i])
+
+	# 2. Pick 2 distinct random photos out of the 5 available photos
+	var available_photos := ALL_PHOTOS.duplicate()
+	available_photos.shuffle()
+	var selected_photos: Array[String] = []
+	for i in range(min(2, available_photos.size())):
+		selected_photos.append(available_photos[i])
+
+	# 3. Pick 3 distinct random texts out of the 6 advice texts
+	var available_texts := ADVICE_TEXTS.duplicate()
+	available_texts.shuffle()
+	var selected_texts: Array[String] = []
+	for i in range(min(3, available_texts.size())):
+		selected_texts.append(available_texts[i])
+
+	# 4. Combine into 5 notes: 2 photos + 3 texts, then shuffle the assignment order
+	var note_contents: Array[Dictionary] = []
+	for p in selected_photos:
+		note_contents.append({"image": p, "text": ""})
+	for t in selected_texts:
+		note_contents.append({"image": "", "text": t})
+	note_contents.shuffle()
+
+	# 5. Instantiate 5 3D note props
+	for index in selected_locations.size():
+		var spec: Dictionary = selected_locations[index]
+		var content: Dictionary = note_contents[index]
+
 		var root := Node3D.new()
 		root.name = "Pamphlet_%02d" % index
 		add_child(root)
-		root.set_meta("note_text", str(spec["text"]))
+
+		var note_image: String = String(content["image"])
+		var note_text: String = String(content["text"])
+
+		root.set_meta("note_image", note_image)
+		root.set_meta("note_text", note_text)
+
 		if bool(spec["floor"]):
 			root.global_position = _world(spec["cell"]) + Vector3(0, 0.003, 0)
 			root.rotation_degrees.x = -90.0
@@ -205,6 +266,7 @@ func _spawn_pamphlets() -> void:
 				continue
 			root.global_position = mount["position"]
 			root.rotation.y = float(mount["rotation_y"])
+
 		var paper := MeshInstance3D.new()
 		var quad := QuadMesh.new()
 		quad.size = Vector2(0.68, 0.48)
@@ -213,11 +275,19 @@ func _spawn_pamphlets() -> void:
 		mat.albedo_color = Color(0.64, 0.59, 0.43)
 		mat.roughness = 1.0
 		mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+
+		if note_image != "" and ResourceLoader.exists(note_image):
+			var tex = load(note_image) as Texture2D
+			if tex:
+				mat.albedo_texture = tex
+				mat.albedo_color = Color(0.85, 0.85, 0.85)
+
 		paper.material_override = mat
 		root.add_child(paper)
+
 		var words := Label3D.new()
-		words.text = "..."
-		words.font_size = 58
+		words.text = "[PHOTO]" if note_image != "" else "..."
+		words.font_size = 52
 		words.pixel_size = 0.0022
 		words.modulate = Color(0.10, 0.075, 0.045)
 		words.outline_size = 0
@@ -240,9 +310,9 @@ func nearest_kind(from: Vector3) -> String:
 
 func prompt(from: Vector3) -> String:
 	match nearest_kind(from):
-		"cassette": return "[E] TAKE THE CASSETTE"
-		"breaker": return "HOLD [E] RESTORE AUX POWER  %.0f%%" % (_breaker_progress / BREAKER_HOLD_SECONDS * 100.0)
-		"pamphlet": return "[E] CLOSE NOTE" if _reading_note else "[E] OPEN NOTE"
+		"cassette": return "TAKE THE CASSETTE"
+		"breaker": return "HOLD TO RESTORE AUX POWER  %.0f%%" % (_breaker_progress / BREAKER_HOLD_SECONDS * 100.0)
+		"pamphlet": return "CLOSE NOTE" if _reading_note else "OPEN NOTE"
 	return ""
 
 func tick_interaction(delta: float) -> bool:
@@ -302,13 +372,13 @@ func _open_pamphlet(pamphlet: Node3D) -> void:
 	dim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 
 	var paper := PanelContainer.new()
-	paper.custom_minimum_size = Vector2(720, 500)
+	paper.custom_minimum_size = Vector2(760, 540)
 	_read_canvas.add_child(paper)
 	paper.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
-	paper.offset_left = -360.0
-	paper.offset_right = 360.0
-	paper.offset_top = -250.0
-	paper.offset_bottom = 250.0
+	paper.offset_left = -380.0
+	paper.offset_right = 380.0
+	paper.offset_top = -270.0
+	paper.offset_bottom = 270.0
 	var paper_style := StyleBoxFlat.new()
 	paper_style.bg_color = Color(0.69, 0.63, 0.46, 1.0)
 	paper_style.border_color = Color(0.26, 0.20, 0.12, 0.9)
@@ -319,29 +389,44 @@ func _open_pamphlet(pamphlet: Node3D) -> void:
 	paper.add_theme_stylebox_override("panel", paper_style)
 
 	var margin := MarginContainer.new()
-	margin.add_theme_constant_override("margin_left", 54)
-	margin.add_theme_constant_override("margin_right", 54)
-	margin.add_theme_constant_override("margin_top", 44)
-	margin.add_theme_constant_override("margin_bottom", 34)
+	margin.add_theme_constant_override("margin_left", 34)
+	margin.add_theme_constant_override("margin_right", 34)
+	margin.add_theme_constant_override("margin_top", 30)
+	margin.add_theme_constant_override("margin_bottom", 24)
 	paper.add_child(margin)
 	var column := VBoxContainer.new()
-	column.add_theme_constant_override("separation", 22)
+	column.add_theme_constant_override("separation", 16)
 	margin.add_child(column)
 
-	var note := Label.new()
-	note.text = str(pamphlet.get_meta("note_text", ""))
-	note.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	note.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	note.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	note.add_theme_font_size_override("font_size", 42)
-	note.add_theme_color_override("font_color", Color(0.105, 0.075, 0.04))
-	if _handwriting:
-		note.add_theme_font_override("font", _handwriting)
-	column.add_child(note)
+	var img_path: String = String(pamphlet.get_meta("note_image", ""))
+	var text_content: String = String(pamphlet.get_meta("note_text", ""))
+
+	if img_path != "" and ResourceLoader.exists(img_path):
+		var tex = load(img_path) as Texture2D
+		if tex:
+			var img_rect := TextureRect.new()
+			img_rect.texture = tex
+			img_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+			img_rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+			img_rect.custom_minimum_size = Vector2(680, 420)
+			img_rect.size_flags_vertical = Control.SIZE_EXPAND_FILL
+			img_rect.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			column.add_child(img_rect)
+	else:
+		var note := Label.new()
+		note.text = text_content
+		note.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		note.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		note.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		note.add_theme_font_size_override("font_size", 42)
+		note.add_theme_color_override("font_color", Color(0.105, 0.075, 0.04))
+		if _handwriting:
+			note.add_theme_font_override("font", _handwriting)
+		column.add_child(note)
 
 	var hint := Label.new()
-	hint.text = "E  —  CLOSE"
+	hint.text = "PRESS E TO CLOSE"
 	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	hint.add_theme_font_size_override("font_size", 20)
 	hint.add_theme_color_override("font_color", Color(0.20, 0.15, 0.09, 0.72))

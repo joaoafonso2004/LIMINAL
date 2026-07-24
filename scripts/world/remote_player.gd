@@ -5,8 +5,6 @@ extends CharacterBody3D
 signal footstep_emitted(world_position: Vector3, audible_range: float, kind: String)
 
 const MODEL_PATH := "res://assets/characters/survivor_body/player.fbx"
-const MODEL_PATH_FALLBACK := "res://assets/characters/survivor_body/survivor_body.glb"
-const ANIM_PATH := "res://assets/characters/survivor_body/survivor_body_animations.tres"
 const STEP_PATH := "res://assets/audio/sfx/player/player_player_step_carpet.mp3"
 
 const LERP_WEIGHT := 12.0
@@ -15,8 +13,15 @@ const WALK_THRESHOLD := 0.6
 @export var player_id: int = -1
 
 var _mesh_root: Node3D
+var _pivot: Node3D                      # holds the model (used to re-ground lying poses)
+var _stand_ground_y: float = 0.0       # static pivot Y that grounds the standing pose
 var _anim_player: AnimationPlayer
 var _cur_clip: String = ""
+var _execution_clip := ""              # replicated victim sequence before downed
+var _body_skeleton: Skeleton3D = null
+var _ground_bone_indices := PackedInt32Array()
+var _hips_bone_idx := -1
+var _head_bone_idx := -1
 
 # Networked smoothing state.
 var _target_pos: Vector3
@@ -28,6 +33,7 @@ var _speed_smooth: float
 var _got_first: bool = false
 var _net_sprinting := false
 var _net_crouching := false
+var _net_move_direction := Vector2.ZERO
 var _step_distance := 0.0
 var _step_stream: AudioStream = null
 
@@ -49,7 +55,6 @@ func _ready() -> void:
 	if ResourceLoader.exists(STEP_PATH):
 		_step_stream = load(STEP_PATH)
 
-	# Harmless capsule collider for completeness (mask=0, so it never blocks).
 	var col := CollisionShape3D.new()
 	var capsule := CapsuleShape3D.new()
 	capsule.height = 1.7
@@ -64,8 +69,13 @@ func _ready() -> void:
 
 	var model: Node3D = _load_model()
 	if model != null:
-		_mesh_root.add_child(model)
-		_setup_model(model)
+		# Encapsular o modelo remoto no Pivot
+		var pivot := Node3D.new()
+		pivot.name = "Pivot"
+		_mesh_root.add_child(pivot)
+		pivot.add_child(model)
+		_pivot = pivot
+		_setup_model(pivot, model)
 	else:
 		_build_fallback_body()
 
@@ -73,6 +83,9 @@ func _ready() -> void:
 ## Mark remote player as downed (collapsed to floor) or revived.
 func set_downed(v: bool) -> void:
 	is_downed = v
+	_execution_clip = ""
+	if is_instance_valid(_anim_player):
+		_anim_player.speed_scale = 1.0
 	if is_instance_valid(_mesh_root):
 		_mesh_root.position = Vector3.ZERO
 		_mesh_root.rotation = Vector3.ZERO
@@ -90,13 +103,32 @@ func set_downed(v: bool) -> void:
 				_cur_clip = "idle"
 
 
+## Display a teammate's synchronized victim animation while their own client
+## remains authoritative over the sequence timing.
+func play_execution_clip(
+		clip_name: String, blend: float = -1.0, playback_speed: float = 1.0) -> bool:
+	if _anim_player == null or not _anim_player.has_animation(clip_name):
+		return false
+	_execution_clip = clip_name
+	_anim_player.speed_scale = clampf(playback_speed, 0.1, 4.0)
+	var actual_blend := ModelUtils.animation_blend_time(_cur_clip, clip_name) \
+		if blend < 0.0 else blend
+	_anim_player.play(clip_name, actual_blend)
+	_cur_clip = clip_name
+	return true
+
+
+## Host-side Entity perception must apply the same crouch detection range to a
+## replicated survivor that the local controller receives.
+func network_is_crouching() -> bool:
+	return _net_crouching
+
+
 ## Load and instance the survivor GLB, or null if unavailable.
 func _load_model() -> Node3D:
 	var path := MODEL_PATH
 	if not ResourceLoader.exists(path):
-		path = MODEL_PATH_FALLBACK
-		if not ResourceLoader.exists(path):
-			return null
+		return null
 	var packed := load(path) as PackedScene
 	if packed == null:
 		return null
@@ -105,16 +137,13 @@ func _load_model() -> Node3D:
 
 
 ## Configure a successfully-loaded model: scale, normals, animation.
-func _setup_model(model: Node3D) -> void:
-	# Scale + orient like the local first-person body. Grounding is deferred until
-	# after a resting clip is playing so it plants the ANIMATED standing pose (the
-	# emptied pelvis-position tracks otherwise leave the body floating).
-	ModelUtils.scale_to_height(model, 1.8)
-	if MODEL_PATH.ends_with(".fbx"):
-		model.rotation_degrees.y = 180.0
+func _setup_model(pivot: Node3D, model: Node3D) -> void:
 	_apply_player_tint(model)
 
-	# Guard against a dark mesh from missing vertex normals.
+	# 1. Aplicar a correção do Mixamo estritamente na malha/modelo,
+	# mantendo o Pivot e os eixos verticais do motor intactos (resolve o afundar no chão).
+	model.rotation_degrees = Vector3(0.0, 180.0, 0.0)
+
 	var meshes := model.find_children("*", "MeshInstance3D")
 	if meshes.size() > 0:
 		var first := meshes[0] as MeshInstance3D
@@ -124,28 +153,32 @@ func _setup_model(model: Node3D) -> void:
 	_anim_player = AnimationPlayer.new()
 	model.add_child(_anim_player)
 
-	if ResourceLoader.exists(ANIM_PATH):
-		var shared := load(ANIM_PATH) as AnimationLibrary
-		if shared != null:
-			# Duplicate before mutating so upright_standing_root never edits the
-			# shared cached resource used by other bodies.
-			var lib := shared.duplicate(true) as AnimationLibrary
-			_anim_player.add_animation_library("", lib)
-			ModelUtils.set_animation_loops(_anim_player)
-			ModelUtils.upright_standing_root(_anim_player)
-			if _anim_player.has_animation("idle"):
-				_anim_player.play("idle")
-				_cur_clip = "idle"
-			elif _anim_player.has_animation("ual1_Idle"):
-				_anim_player.play("ual1_Idle")
-				_cur_clip = "ual1_Idle"
+	var skeleton: Skeleton3D = null
+	for n in model.find_children("*", "Skeleton3D"):
+		skeleton = n as Skeleton3D
+		break
+	if skeleton != null:
+		_body_skeleton = skeleton
+		_cache_body_bones()
+		var rel_path := String(model.get_path_to(skeleton))
+		var lib := ModelUtils.build_survivor_library_for(skeleton, rel_path)
+		_anim_player.add_animation_library("", lib)
+		ModelUtils.set_animation_loops(_anim_player)
 
-	# Plant the feet on the floor using the live idle pose, not the bind pose.
-	ModelUtils.ground_character_by_pose(model, _anim_player)
+		if _anim_player.has_animation("idle"):
+			_anim_player.play("idle")
+			_cur_clip = "idle"
+
+		_anim_player.advance(0)
+
+	# 2. Escala e grounding limpos aplicados no Pivot (agora com o Y perfeitamente vertical)
+	ModelUtils.scale_to_height(pivot, 1.8)
+	ModelUtils.ground_character_by_pose(pivot, _anim_player)
+	_stand_ground_y = pivot.position.y
 
 
 func _apply_player_tint(model: Node3D) -> void:
-	ModelUtils.fix_character_materials(model)
+	ModelUtils.apply_cc3_textures(model)
 	var tint: Color = PLAYER_TINTS[posmod(player_id, PLAYER_TINTS.size())]
 	_setup_overhead_tag(tint)
 	set_meta("player_tint", tint)
@@ -174,6 +207,59 @@ func _build_fallback_body() -> void:
 	_setup_overhead_tag(tint)
 
 
+## The pivot.y that plants the current posed body's lowest bone on the floor
+## (floor ≈ mesh_root Y=0), regardless of clip authoring. Keeps current on a
+## wild measurement.
+func _grounded_pivot_y() -> float:
+	if _pivot == null or _mesh_root == null or not is_instance_valid(_body_skeleton):
+		return _stand_ground_y
+	var lowest := INF
+	for i in _ground_bone_indices:
+		var wp: Vector3 = _body_skeleton.global_transform \
+			* _body_skeleton.get_bone_global_pose(i).origin
+		var ly := _mesh_root.to_local(wp).y
+		if ly < lowest:
+			lowest = ly
+	if lowest == INF:
+		return _pivot.position.y
+	var target := _pivot.position.y - lowest + 0.05
+	if absf(target - _pivot.position.y) > 3.0:
+		return _pivot.position.y
+	return target
+
+
+func _cache_body_bones() -> void:
+	_ground_bone_indices.clear()
+	_hips_bone_idx = -1
+	_head_bone_idx = -1
+	if not is_instance_valid(_body_skeleton):
+		return
+	for i in range(_body_skeleton.get_bone_count()):
+		var canonical := ModelUtils.canonical_bone(_body_skeleton.get_bone_name(i))
+		if canonical == "":
+			continue
+		_ground_bone_indices.append(i)
+		if canonical == "hips" and _hips_bone_idx < 0:
+			_hips_bone_idx = i
+	# Preserve the exact lookup order used before CX18; caching must not start
+	# driving a different bone on rigs with auxiliary head/neck joints.
+	for head_name in ["Head", "head", "Neck", "neck_01"]:
+		_head_bone_idx = _body_skeleton.find_bone(head_name)
+		if _head_bone_idx >= 0:
+			break
+
+
+func _centered_pose_pivot_xz() -> Vector2:
+	if not is_instance_valid(_body_skeleton) or _hips_bone_idx < 0:
+		return Vector2(_pivot.position.x, _pivot.position.z)
+	var world_position := _body_skeleton.global_transform \
+		* _body_skeleton.get_bone_global_pose(_hips_bone_idx).origin
+	var local_position := _mesh_root.to_local(world_position)
+	var current := Vector2(_pivot.position.x, _pivot.position.z)
+	var target := current - Vector2(local_position.x, local_position.z)
+	return target if target.distance_to(current) <= 3.0 else current
+
+
 ## Apply a network transform update. Snaps on the first update.
 func update_target(msg: Dictionary) -> void:
 	_target_pos = Vector3(
@@ -184,6 +270,7 @@ func update_target(msg: Dictionary) -> void:
 	_target_pitch = clampf(float(msg.get("pitch", 0.0)), -1.3, 1.3)
 	_net_sprinting = bool(msg.get("spr", false))
 	_net_crouching = bool(msg.get("cr", false))
+	_net_move_direction = Vector2(float(msg.get("mx", 0.0)), float(msg.get("mz", -1.0))).normalized()
 
 	if not _got_first:
 		_got_first = true
@@ -235,49 +322,55 @@ func _process(delta: float) -> void:
 
 
 func _apply_head_pitch() -> void:
-	if _mesh_root == null or not is_instance_valid(_mesh_root):
+	if _mesh_root == null or not is_instance_valid(_mesh_root) \
+			or not is_instance_valid(_body_skeleton) or _head_bone_idx < 0:
 		return
-	var skeletons := _mesh_root.find_children("*", "Skeleton3D")
-	if skeletons.size() == 0:
-		return
-	var skeleton: Skeleton3D = skeletons[0]
-	# Try both naming conventions
-	var head_idx := skeleton.find_bone("Head")
-	if head_idx == -1:
-		head_idx = skeleton.find_bone("head")
-	if head_idx == -1:
-		head_idx = skeleton.find_bone("Neck")
-	if head_idx == -1:
-		head_idx = skeleton.find_bone("neck_01")
-	if head_idx != -1:
-		# Layer the look pitch ONTO the bone's rest orientation. Writing a raw
-		# Quaternion(RIGHT, pitch) wiped the head's correct base pose and could
-		# snap it hard; composing with the rest keeps the head where it belongs
-		# and just nods it toward the remote player's aim.
-		var rest_q := skeleton.get_bone_rest(head_idx).basis.get_rotation_quaternion()
-		var pitch := clampf(_current_pitch, -0.7, 0.7)
-		skeleton.set_bone_pose_rotation(head_idx, rest_q * Quaternion(Vector3.RIGHT, pitch))
+	# Layer the look pitch ONTO the bone's rest orientation. Writing a raw
+	# Quaternion(RIGHT, pitch) wiped the head's correct base pose and could
+	# snap it hard; composing with the rest keeps the head where it belongs.
+	var rest_q := _body_skeleton.get_bone_rest(_head_bone_idx).basis.get_rotation_quaternion()
+	var pitch := clampf(_current_pitch, -0.7, 0.7)
+	_body_skeleton.set_bone_pose_rotation(
+		_head_bone_idx, rest_q * Quaternion(Vector3.RIGHT, pitch))
 
 
 func _tick_crouch_posture(delta: float) -> void:
 	if _mesh_root == null:
 		return
-	var target_y := 0.0
-	var target_scale := Vector3.ONE
-	var target_rot_x := 0.0
-	if not is_downed and _net_crouching:
-		target_y = -0.45
-		target_scale = Vector3(1.08, 0.72, 1.08)
-		target_rot_x = 0.22
-
+	# The crouch_idle/crouch_walk clips now do the crouching. The old vertical
+	# squash + lower here double-crouched the body and, being a non-uniform scale
+	# on a skinned mesh, twisted the legs into the floor — so keep the body neutral.
 	var lerp_speed := 14.0 * delta
-	_mesh_root.position.y = lerpf(_mesh_root.position.y, target_y, lerp_speed)
-	_mesh_root.scale = _mesh_root.scale.lerp(target_scale, lerp_speed)
-	_mesh_root.rotation.x = lerpf(_mesh_root.rotation.x, target_rot_x, lerp_speed)
+	_mesh_root.position.y = lerpf(_mesh_root.position.y, 0.0, lerp_speed)
+	_mesh_root.scale = _mesh_root.scale.lerp(Vector3.ONE, lerp_speed)
+	_mesh_root.rotation.x = lerpf(_mesh_root.rotation.x, 0.0, lerp_speed)
 
 
 func _update_animation() -> void:
 	if _anim_player == null:
+		return
+	# Ground EVERY pose (standing, crouch, lying) by the posed skeleton's actual
+	# lowest bone so the visible body never floats or clips — smoothed.
+	if _pivot != null and is_instance_valid(_pivot):
+		var target_y := _grounded_pivot_y()
+		var snap_low_pose := is_downed or _execution_clip != "" \
+			or (_net_crouching and _speed_smooth <= WALK_THRESHOLD)
+		if snap_low_pose:
+			_pivot.position.y = target_y
+		else:
+			_pivot.position.y = target_y if target_y > _pivot.position.y else lerpf(_pivot.position.y, target_y, 0.2)
+		# Keep low poses centred on the replicated CharacterBody. Otherwise their
+		# Mixamo hips offset rotates in a circle whenever network yaw changes.
+		var lock_low_pose := _execution_clip == "" and (is_downed or _net_crouching)
+		if lock_low_pose:
+			var centered := _centered_pose_pivot_xz()
+			_pivot.position.x = centered.x
+			_pivot.position.z = centered.y
+		else:
+			_pivot.position.x = lerpf(_pivot.position.x, 0.0, 0.25)
+			_pivot.position.z = lerpf(_pivot.position.z, 0.0, 0.25)
+	# The next replicated execution phase (or set_downed) releases this hold.
+	if _execution_clip != "":
 		return
 
 	var want := "idle"
@@ -288,10 +381,18 @@ func _update_animation() -> void:
 		want = "revive"
 		_anim_player.speed_scale = 1.0
 	elif _net_crouching:
-		want = "crouch_walk" if _speed_smooth > WALK_THRESHOLD else "crouch_idle"
+		if _speed_smooth > WALK_THRESHOLD:
+			var crouch_directional := ModelUtils.directional_walk_clip(_net_move_direction, true)
+			want = crouch_directional if _anim_player.has_animation(crouch_directional) else "crouch_walk"
+		else:
+			want = "crouch_idle"
 		_anim_player.speed_scale = 1.0
 	elif _speed_smooth > WALK_THRESHOLD:
-		want = "run" if _net_sprinting else "walk"
+		if _net_sprinting:
+			want = "run"
+		else:
+			var directional := ModelUtils.directional_walk_clip(_net_move_direction, false)
+			want = directional if _anim_player.has_animation(directional) else "walk"
 		_anim_player.speed_scale = 1.0
 	else:
 		want = "idle"
@@ -301,10 +402,12 @@ func _update_animation() -> void:
 		return
 
 	if _anim_player.has_animation(want):
-		ModelUtils.play_locomotion(_anim_player, want, _cur_clip, 0.2)
+		ModelUtils.play_locomotion(
+			_anim_player, want, _cur_clip, -1.0,
+			ModelUtils.SURVIVOR_LOCOMOTION_PHASES)
 		_cur_clip = want
 	elif want == "crawl_down" and _anim_player.has_animation("crawl"):
-		_anim_player.play("crawl", 0.2)
+		_anim_player.play("crawl", ModelUtils.animation_blend_time(_cur_clip, "crawl"))
 		_cur_clip = "crawl"
 	elif _anim_player.has_animation("ual1_Walk") and _speed_smooth > WALK_THRESHOLD:
 		_anim_player.play("ual1_Walk", 0.2)

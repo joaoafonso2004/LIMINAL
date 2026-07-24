@@ -56,11 +56,15 @@ const PRELOAD_PATHS: PackedStringArray = [
 	"res://assets/audio/sfx/pickup/pickup_escape_unlocked.mp3",
 	"res://assets/audio/sfx/pickup/pickup_snus_pickup.mp3",
 	"res://assets/audio/sfx/player/player_player_step_carpet.mp3",
+	# CX30 — the victim's jumpscare must start on the frame it is caught, so the
+	# stream is resolved here instead of during the catch.
+	"res://assets/video/jumpscare.ogv",
 	# -- 3D models + animation libs (load last) --
 	"res://assets/animations/humanoid_profile_bone_map.tres",
 	"res://assets/characters/survivor_body/player.fbx",
-	"res://assets/characters/survivor_body/survivor_body.glb",
-	"res://assets/characters/survivor_body/survivor_body_animations.tres",
+	"res://assets/characters/survivor_body/idle.fbx",
+	"res://assets/characters/survivor_body/walk.fbx",
+	"res://assets/characters/survivor_body/run.fbx",
 	"res://assets/characters/watcher_silhouette/watcher_silhouette.glb",
 	"res://assets/characters/watcher_silhouette/watcher_silhouette_animations.tres",
 	"res://assets/environment/interiors/yellow_corner_l.glb",

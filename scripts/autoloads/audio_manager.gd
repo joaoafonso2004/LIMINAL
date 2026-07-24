@@ -110,6 +110,34 @@ func stop_music() -> void:
 	if music_player:
 		music_player.stop()
 
+## Stop every pooled one-shot currently playing `stream`. Pooled SFX have no
+## handle, so a long sting (the chase scream is ~28 s) would otherwise keep
+## ringing after the event that started it is already over.
+func stop_sfx(stream: AudioStream) -> void:
+	if stream == null:
+		return
+	for p in sfx_players:
+		if is_instance_valid(p) and p.playing and p.stream == stream:
+			p.stop()
+
+## Ramp `stream`'s pooled one-shots down and stop them. Used when a chase breaks:
+## a hard cut reads as a bug, a fade reads as the thing losing you.
+func fade_out_sfx(stream: AudioStream, duration: float = 0.9) -> void:
+	if stream == null:
+		return
+	for p in sfx_players:
+		if not (is_instance_valid(p) and p.playing and p.stream == stream):
+			continue
+		var player := p
+		var restore_db := player.volume_db
+		var tween := create_tween()
+		tween.tween_property(player, "volume_db", -60.0, maxf(duration, 0.05))
+		tween.tween_callback(func() -> void:
+			if is_instance_valid(player):
+				player.stop()
+				# Pooled players are reused; hand it back at its old level.
+				player.volume_db = restore_db)
+
 func stop_all_sounds() -> void:
 	stop_music()
 	for p in sfx_players:

@@ -2,23 +2,21 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://bacp45l03adkx"
-path="res://.godot/imported/exit_door_real_tripo_image_a8050bf2-64e4-4e9b-a6b2-05f9e6e12cf3_1.jpg-c22dbac50556a9fc8824ae1ad7314912.ctex"
+uid="uid://dsojxv7l42i41"
+path.s3tc="res://.godot/imported/exit_door_real_tripo_image_a8050bf2-64e4-4e9b-a6b2-05f9e6e12cf3_1.jpg-c22dbac50556a9fc8824ae1ad7314912.s3tc.ctex"
 metadata={
-"vram_texture": false
-}
-generator_parameters={
-"md5": "81180906de408deea6257a2b30ab4802"
+"imported_formats": ["s3tc_bptc"],
+"vram_texture": true
 }
 
 [deps]
 
 source_file="res://assets/props/decorations/exit_door_real_tripo_image_a8050bf2-64e4-4e9b-a6b2-05f9e6e12cf3_1.jpg"
-dest_files=["res://.godot/imported/exit_door_real_tripo_image_a8050bf2-64e4-4e9b-a6b2-05f9e6e12cf3_1.jpg-c22dbac50556a9fc8824ae1ad7314912.ctex"]
+dest_files=["res://.godot/imported/exit_door_real_tripo_image_a8050bf2-64e4-4e9b-a6b2-05f9e6e12cf3_1.jpg-c22dbac50556a9fc8824ae1ad7314912.s3tc.ctex"]
 
 [params]
 
-compress/mode=1
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.75
 compress/uastc_level=0
@@ -26,7 +24,7 @@ compress/rdo_quality_loss=0.0
 compress/hdr_compression=1
 compress/normal_map=0
 compress/channel_pack=0
-mipmaps/generate=false
+mipmaps/generate=true
 mipmaps/limit=-1
 roughness/mode=0
 roughness/src_normal=""
@@ -40,4 +38,4 @@ process/normal_map_invert_y=false
 process/hdr_as_srgb=false
 process/hdr_clamp_exposure=false
 process/size_limit=1024
-detect_3d/compress_to=1
+detect_3d/compress_to=0

@@ -224,7 +224,8 @@ func _process(delta: float) -> void:
 		if is_instance_valid(b):
 			b.rotation.y += delta * 0.9
 			if is_instance_valid(_local_player):
-				b.visible = b.global_position.distance_to(_local_player.global_position) < VISIBLE_RANGE
+				b.visible = b.global_position.distance_squared_to( \
+					_local_player.global_position) < VISIBLE_RANGE * VISIBLE_RANGE
 
 	# 3-Minute Snus Hint System: If 180 seconds pass without collecting a Snus, give a compass hint!
 	if _collected.size() < TOTAL:

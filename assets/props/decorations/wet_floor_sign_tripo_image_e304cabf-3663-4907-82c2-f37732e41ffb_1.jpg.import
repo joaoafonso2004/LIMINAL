@@ -2,23 +2,21 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://b8uxj2mf7p1s"
-path="res://.godot/imported/wet_floor_sign_tripo_image_e304cabf-3663-4907-82c2-f37732e41ffb_1.jpg-2009d20620ebbf52b1bd0d70c4d6605f.ctex"
+uid="uid://c5fv0014kywh1"
+path.s3tc="res://.godot/imported/wet_floor_sign_tripo_image_e304cabf-3663-4907-82c2-f37732e41ffb_1.jpg-2009d20620ebbf52b1bd0d70c4d6605f.s3tc.ctex"
 metadata={
-"vram_texture": false
-}
-generator_parameters={
-"md5": "033fff43da09d5a48a1de560388d5e1d"
+"imported_formats": ["s3tc_bptc"],
+"vram_texture": true
 }
 
 [deps]
 
 source_file="res://assets/props/decorations/wet_floor_sign_tripo_image_e304cabf-3663-4907-82c2-f37732e41ffb_1.jpg"
-dest_files=["res://.godot/imported/wet_floor_sign_tripo_image_e304cabf-3663-4907-82c2-f37732e41ffb_1.jpg-2009d20620ebbf52b1bd0d70c4d6605f.ctex"]
+dest_files=["res://.godot/imported/wet_floor_sign_tripo_image_e304cabf-3663-4907-82c2-f37732e41ffb_1.jpg-2009d20620ebbf52b1bd0d70c4d6605f.s3tc.ctex"]
 
 [params]
 
-compress/mode=1
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.75
 compress/uastc_level=0
@@ -26,7 +24,7 @@ compress/rdo_quality_loss=0.0
 compress/hdr_compression=1
 compress/normal_map=0
 compress/channel_pack=0
-mipmaps/generate=false
+mipmaps/generate=true
 mipmaps/limit=-1
 roughness/mode=0
 roughness/src_normal=""
@@ -40,4 +38,4 @@ process/normal_map_invert_y=false
 process/hdr_as_srgb=false
 process/hdr_clamp_exposure=false
 process/size_limit=1024
-detect_3d/compress_to=1
+detect_3d/compress_to=0

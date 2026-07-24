@@ -63,8 +63,11 @@ within it.
 | `JUMP_DURATION` | 0.55 | On screen under a second; no death, no lingering. |
 | `PRE_JUMP_CALM_WINDOW` | 25 | False security precedes every scare. |
 | `JUMP_CALM_MIN/MAX` | 30/60 | Total calm after a scare. |
-| `CHASE_SPEED` | 2.95 | Player walks 2.4: escape must be possible, barely. |
-| `LOS_LOSE_TIME` | 2.0 | Cornering is the escape mechanic. |
+| `CHASE_SPEED` | 7.2 | Faster than the 4.75 sprint on purpose: you cannot outrun it. |
+| `CHASE_SIGHT_RANGE` | 26.0 | Without a cap it re-acquired down any straight corridor forever. |
+| `CHASE_BLIND_GIVE_UP` | 12.0 | Cornering buys a hunt to your last known spot, not an instant escape. |
+| `CONFUSED_DURATION` | 3.0 | It stands and looks before wandering off; stay in cover. |
+| `CONFUSED_REACQUIRE_RANGE` | 16.0 | Stepping out during that window puts it straight back on you. |
 | `CHASE_NO_ROUTE_TIMEOUT` | 4.0 | A walled-off chaser dissolves; no wall-humping. |
 | `STALK_LINGER_KILL` | 6.0 | Final phase punishes stopping, not moving. |
 | `SOUND_GAP_MIN/MAX` | 18/40 | Unexplained events stay rare enough to unsettle. |

@@ -14,11 +14,10 @@ signal exit_reached()
 const CELL: float = 4.0
 const VIEW_RADIUS: int = 12         # cells kept around the player (48 m — no void at corridor ends)
 const FREE_RADIUS: int = 14         # cells beyond this are released (bumps salt)
-# Real OmniLights only this close. 4 → up to ~50 live lights, inside the GL
-# limit of 64; radius 6 created ~90+ and the renderer dropped lights per-mesh
-# at random (the patchy floor/wall lighting). Cells beyond this still read:
-# emissive panels + ambient light carry them.
-const LIGHT_RADIUS: int = 4
+# Compatibility renderer has a hard 64-light budget. Reserve twelve for SNUS,
+# props, extraction and short-lived effects. The maze share is a stable 360-degree
+# pool around the player; camera rotation never changes which lamps are powered.
+const MAX_STREAMED_LIGHTS: int = 52
 # Look/layout knobs live in scripts/tuning.gd — edit there, not here.
 const WALL_DENSITY: float = Tuning.WALL_DENSITY
 const WALL_DENSITY_HALL: float = Tuning.WALL_DENSITY_HALL
@@ -32,10 +31,15 @@ const WALL_MOUNT_GAP: float = 0.002
 const START_CLEAR: int = 1          # Chebyshev radius kept open around origin
 const PANEL_ENERGY: float = Tuning.PANEL_ENERGY
 const LIGHT_ENERGY: float = Tuning.LIGHT_ENERGY
+const DARK_ALCOVE_CHANCE: float = Tuning.DARK_ALCOVE_CHANCE
+const ROOM_THRESHOLD_CHANCE: float = Tuning.ROOM_THRESHOLD_CHANCE
+const MAP_DRESSING_CHANCE: float = Tuning.MAP_DRESSING_CHANCE
 
 # Directions: 0 = East (+X edge owned by cell), 1 = North (+Z edge owned by cell)
 const DIR_E: int = 0
 const DIR_N: int = 1
+const DIR_W: int = 2
+const DIR_S: int = 3
 
 var _player: Node3D = null
 var _cells: Dictionary = {}          # Vector2i -> Dictionary
@@ -54,13 +58,22 @@ var _linoleum_mat: StandardMaterial3D
 var _ceil_mat: StandardMaterial3D
 var _panel_mat: StandardMaterial3D
 var _exit_mat: StandardMaterial3D
+var _void_mat: StandardMaterial3D
+var _floor_dark_mat: StandardMaterial3D
+var _alcove_wall_mat: StandardMaterial3D
+var _alcove_ceil_mat: StandardMaterial3D
+var _cardboard_mat: StandardMaterial3D
+var _office_metal_mat: StandardMaterial3D
+var _puddle_mat: StandardMaterial3D
 
 # Exit state
 var _exit_available: bool = false
+var _exit_seal: StaticBody3D = null
 var _exit_placed: bool = false
 var _exit_area: Area3D = null
 var _exit_cell: Vector2i = Vector2i.ZERO
 var _exit_door_base := Vector3.ZERO
+var _exit_forward := Vector3.FORWARD
 
 # Prop scenes (anomalies / exit dressing)
 var _chair_scene: PackedScene = null
@@ -68,12 +81,15 @@ var _phone_scene: PackedScene = null
 var _exit_door_scene: PackedScene = null
 var _office_door_scene: PackedScene = null
 var _fixture_scene: PackedScene = null
+var _wet_floor_scene: PackedScene = null
 
 var _anomaly_cells: Dictionary = {}   # Vector2i -> true
 var _powered_zones: Array[Dictionary] = []
 var _static_layout: bool = true       # layout is a pure function of cell coords
 var _run_seed: int = 1
 var _phone_cells: Dictionary = {}
+var _anchor_rooms: Dictionary = {}         # Vector2i -> Dictionary
+var _anchor_archways: Dictionary = {}      # String "x,y,dir" -> bool
 
 func setup(player: Node3D) -> void:
 	_player = player
@@ -85,13 +101,70 @@ func set_static_layout(v: bool) -> void:
 
 func set_run_seed(value: int) -> void:
 	_run_seed = maxi(1, value)
+	_select_exit_cell()
 	_prepare_phone_cells()
+	_prepare_anchor_rooms()
 
 func _ready() -> void:
 	_build_materials()
 	_load_props()
+	if _exit_cell == Vector2i.ZERO:
+		_select_exit_cell()
 	if _phone_cells.is_empty():
 		_prepare_phone_cells()
+	if _anchor_rooms.is_empty():
+		_prepare_anchor_rooms()
+
+func _prepare_anchor_rooms() -> void:
+	_anchor_rooms.clear()
+	_anchor_archways.clear()
+	var rng := RandomNumberGenerator.new()
+	rng.seed = _run_seed ^ 0x414E4348
+	
+	var specs := [
+		{"kind": "red_room", "min_x": 4, "max_x": 10, "min_y": 4, "max_y": 10},
+		{"kind": "flooded_lounge", "min_x": -10, "max_x": -4, "min_y": 4, "max_y": 10},
+		{"kind": "archive_shrine", "min_x": 4, "max_x": 10, "min_y": -10, "max_y": -4},
+	]
+	
+	for spec in specs:
+		var ox := rng.randi_range(int(spec["min_x"]), int(spec["max_x"]))
+		var oy := rng.randi_range(int(spec["min_y"]), int(spec["max_y"]))
+		var origin := Vector2i(ox, oy)
+		
+		for dx in range(2):
+			for dy in range(2):
+				var c := origin + Vector2i(dx, dy)
+				_anchor_rooms[c] = {
+					"kind": spec["kind"],
+					"origin": origin,
+					"local_offset": Vector2i(dx, dy),
+				}
+		
+		var outer_edges := [
+			[origin + Vector2i(0, 0), DIR_W],
+			[origin + Vector2i(0, 1), DIR_W],
+			[origin + Vector2i(1, 0), DIR_E],
+			[origin + Vector2i(1, 1), DIR_E],
+			[origin + Vector2i(0, 0), DIR_S],
+			[origin + Vector2i(1, 0), DIR_S],
+			[origin + Vector2i(0, 1), DIR_N],
+			[origin + Vector2i(1, 1), DIR_N],
+		]
+		
+		var pick1: Array = outer_edges[rng.randi() % outer_edges.size()]
+		var pick2: Array = outer_edges[rng.randi() % outer_edges.size()]
+		_mark_archway(pick1[0], int(pick1[1]))
+		_mark_archway(pick2[0], int(pick2[1]))
+
+func _mark_archway(c: Vector2i, dir: int) -> void:
+	if dir == DIR_W:
+		c = Vector2i(c.x - 1, c.y)
+		dir = DIR_E
+	elif dir == DIR_S:
+		c = Vector2i(c.x, c.y - 1)
+		dir = DIR_N
+	_anchor_archways["%d,%d,%d" % [c.x, c.y, dir]] = true
 
 ## Guaranteed phones, spread across the map and shared by seed. Walls remain
 ## static, so randomized content cannot desynchronize collision in co-op.
@@ -110,7 +183,7 @@ func _prepare_phone_cells() -> void:
 			var candidate := Vector2i(
 				rng.randi_range(sector.position.x, sector.end.x - 1),
 				rng.randi_range(sector.position.y, sector.end.y - 1))
-			if _cheb(candidate) < 3 or candidate.distance_squared_to(EXIT_CELL) < 9:
+			if _cheb(candidate) < 3 or candidate.distance_squared_to(_exit_cell) < 9:
 				continue
 			if not is_cell_open(candidate) or corridor_path(candidate, Vector2i.ZERO, 1400).is_empty():
 				continue
@@ -155,6 +228,29 @@ func _build_materials() -> void:
 	_exit_mat.emission = Color(0.75, 0.95, 1.0)
 	_exit_mat.emission_energy_multiplier = 2.2
 	_exit_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	_void_mat = StandardMaterial3D.new()
+	_void_mat.albedo_color = Color(0.002, 0.002, 0.001)
+	_void_mat.roughness = 1.0
+	_void_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	_void_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	_floor_dark_mat = _mk_mat("res://assets/textures/floors/backrooms_carpet_clean.png", Vector3(2, 2, 1), 1.0, Color(0.19, 0.18, 0.14))
+	# CX31 — the alcove interior used to be `_void_mat`: unshaded near-black
+	# planes that read as a hole punched through the level, with a razor edge
+	# where the lit yellow wall stopped. These are the SAME wallpaper/ceiling
+	# surfaces as everywhere else, only very dark, so the one dim lamp inside
+	# falls off across them and the recess reads as an unlit room.
+	_alcove_wall_mat = _mk_mat("res://assets/textures/walls/backrooms_yellow_wallpaper.png", Vector3(2, 1, 1.5), 0.96, Color(0.115, 0.112, 0.086))
+	_alcove_ceil_mat = _mk_mat("res://assets/textures/surfaces/backrooms_ceiling_tiles.png", Vector3(2, 2, 1), 0.98, Color(0.085, 0.084, 0.074))
+	_cardboard_mat = StandardMaterial3D.new()
+	_cardboard_mat.albedo_color = Color(0.34, 0.25, 0.14)
+	_cardboard_mat.roughness = 0.96
+	_office_metal_mat = StandardMaterial3D.new()
+	_office_metal_mat.albedo_color = Color(0.23, 0.24, 0.20)
+	_office_metal_mat.roughness = 0.82
+	_puddle_mat = StandardMaterial3D.new()
+	_puddle_mat.albedo_color = Color(0.08, 0.10, 0.065, 0.42)
+	_puddle_mat.roughness = 0.22
+	_puddle_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 
 func _mk_mat(path: String, uv: Vector3, rough: float, tint: Color) -> StandardMaterial3D:
 	var m := StandardMaterial3D.new()
@@ -173,6 +269,7 @@ func _load_props() -> void:
 	_exit_door_scene = _load_scene("res://assets/props/decorations/exit_door_real.glb")
 	_office_door_scene = _load_scene("res://assets/props/decorations/office_door_closed.glb")
 	_fixture_scene = _load_scene("res://assets/props/decorations/fluorescent_tube_fixture.glb")
+	_wet_floor_scene = _load_scene("res://assets/props/decorations/wet_floor_sign.glb")
 
 func _load_scene(path: String) -> PackedScene:
 	if ResourceLoader.exists(path):
@@ -200,13 +297,18 @@ func _physics_process(delta: float) -> void:
 		return
 	var focus: Vector3 = _stream_focus_pos if _stream_focus_active else _player.global_position
 	var pc: Vector2i = _cell_of(focus)
-	if pc != _cur_cell:
+	var cell_changed := pc != _cur_cell
+	if cell_changed:
 		_cur_cell = pc
 		_stream(pc)
-		_update_lights(pc)
 		entered_cell.emit(pc)
 		_check_anomaly(pc)
 		_maybe_place_exit(pc)
+
+	# Light membership is spatial and camera-independent. It only changes when the
+	# player crosses a cell, so looking around can never switch a lamp on or off.
+	if cell_changed:
+		_update_lights(pc)
 
 func _process(delta: float) -> void:
 	_animate_lights(delta)
@@ -231,6 +333,8 @@ func _stream(center: Vector2i) -> void:
 	# Free out-of-range cells (bump salt so they regenerate differently)
 	var to_free: Array = []
 	for c in _cells.keys():
+		if _exit_placed and c == _exit_cell:
+			continue
 		if abs(c.x - center.x) > FREE_RADIUS or abs(c.y - center.y) > FREE_RADIUS:
 			to_free.append(c)
 	for c in to_free:
@@ -248,6 +352,17 @@ func _wall_present(owner: Vector2i, dir: int) -> bool:
 	# Enforce hard boundaries between -16 and 16 (map is limited by solid walls)
 	if abs(owner.x) > 16 or abs(owner.y) > 16 or abs(nb.x) > 16 or abs(nb.y) > 16:
 		return true
+
+	# Carve internal walls between cells of the SAME Anchor Room
+	if _anchor_rooms.has(owner) and _anchor_rooms.has(nb):
+		var info_a: Dictionary = _anchor_rooms[owner]
+		var info_b: Dictionary = _anchor_rooms[nb]
+		if info_a["origin"] == info_b["origin"]:
+			return false
+
+	# Carve open high archway entrances on Anchor Room perimeters
+	if _anchor_archways.has("%d,%d,%d" % [owner.x, owner.y, dir]):
+		return false
 
 	var h := _hash3(owner.x, owner.y, dir * 131 + _salt_of(owner) * 977)
 	return h < _local_wall_density(owner)
@@ -308,6 +423,20 @@ func _build_cell(c: Vector2i) -> void:
 	var fl_mat := _floor_mat
 	var wl_mat := _wall_mat
 
+	# Anchor Room custom theme materials
+	if _anchor_rooms.has(c):
+		var ainfo: Dictionary = _anchor_rooms[c]
+		var akind: String = ainfo["kind"]
+		if akind == "red_room":
+			fl_mat = _linoleum_mat
+			wl_mat = _wall_dirty_mat
+		elif akind == "flooded_lounge":
+			fl_mat = _floor_dark_mat
+			wl_mat = _wall_dark_mat
+		elif akind == "archive_shrine":
+			fl_mat = _floor_dark_mat
+			wl_mat = _alcove_wall_mat
+
 	# Floor
 	_add_box(root, body, Vector3(CELL, 0.1, CELL), Vector3(0, -0.05, 0), fl_mat, true)
 	# Ceiling
@@ -318,6 +447,14 @@ func _build_cell(c: Vector2i) -> void:
 		_add_box(root, body, Vector3(0.35, WALL_H, CELL), Vector3(CELL * 0.5, WALL_H * 0.5, 0), wl_mat, true)
 	if _wall_present(c, DIR_N):
 		_add_box(root, body, Vector3(CELL, WALL_H, 0.35), Vector3(0, WALL_H * 0.5, CELL * 0.5), wl_mat, true)
+
+	# High Open Archway Entrances for Anchor Rooms (no door barrier, 2.6m clearance)
+	var key_e := "%d,%d,%d" % [c.x, c.y, DIR_E]
+	var key_n := "%d,%d,%d" % [c.x, c.y, DIR_N]
+	if _anchor_archways.has(key_e):
+		_add_box(root, body, Vector3(0.35, 0.45, CELL), Vector3(CELL * 0.5, 2.775, 0), wl_mat, true)
+	if _anchor_archways.has(key_n):
+		_add_box(root, body, Vector3(CELL, 0.45, 0.35), Vector3(0, 2.775, CELL * 0.5), wl_mat, true)
 	# Cap the far boundary so the fog edge isn't fully open where neighbors are
 	# missing. These caps MUST collide: without a hitbox the player walks
 	# straight through the fog-edge slab and falls out of the world. When the
@@ -343,6 +480,11 @@ func _build_cell(c: Vector2i) -> void:
 	for nb in [Vector2i(c.x + 1, c.y), Vector2i(c.x - 1, c.y), Vector2i(c.x, c.y + 1), Vector2i(c.x, c.y - 1)]:
 		if not _edge_between(c, nb):
 			open_edges += 1
+	var open_directions := _open_directions(c)
+	var reserved_cell := _cheb(c) < 3 or _phone_cells.has(c) or c == _exit_cell
+	var formation := ""
+	if not reserved_cell:
+		formation = _place_room_formation(root, c, open_directions)
 
 	# Not all fixtures burn alike: some run at barely half strength, giving
 	# each pool its own character and leaving near-dark stretches between.
@@ -350,6 +492,7 @@ func _build_cell(c: Vector2i) -> void:
 	var data := {
 		"node": root, "light": null, "panel_mat": null,
 		"dark": false, "anomaly": false, "exit": false,
+		"formation": formation,
 		"base_energy": PANEL_ENERGY * light_mult, "light_mult": light_mult,
 		"flick_seed": _hash3(c.x, c.y, 7),
 	}
@@ -357,7 +500,8 @@ func _build_cell(c: Vector2i) -> void:
 	# Ceiling light panel (visual) — sparse: roughly half the open cells are lit,
 	# so real pools of darkness sit between the panels.
 	var give_light := open_edges >= 1 and _hash3(c.x, c.y, 51) > Tuning.LIT_THRESHOLD
-	var is_dark_zone := open_edges >= 2 and _hash3(c.x, c.y, 88) < Tuning.DARK_ZONE_CHANCE
+	var is_dark_zone := formation == "dark_alcove" \
+		or (open_edges >= 2 and _hash3(c.x, c.y, 88) < Tuning.DARK_ZONE_CHANCE)
 	if is_dark_zone:
 		give_light = false
 		data["dark"] = true
@@ -379,6 +523,10 @@ func _build_cell(c: Vector2i) -> void:
 		_place_phone(root, c, data)
 	if not _phone_cells.has(c) and open_edges >= 3 and _cheb(c) >= 3 and _hash3(c.x, c.y, 205) < Tuning.ANOMALY_CHANCE:
 		_place_anomaly(root, c, data)
+	if _anchor_rooms.has(c):
+		var ainfo: Dictionary = _anchor_rooms[c]
+		if ainfo["local_offset"] == Vector2i(0, 0):
+			_place_anchor_room_landmark(root, body, ainfo["kind"])
 
 	_cells[c] = data
 	_apply_power_override(c, data)
@@ -396,6 +544,79 @@ func _apply_power_override(cell: Vector2i, data: Dictionary) -> void:
 		if light is OmniLight3D:
 			(light as OmniLight3D).light_energy = LIGHT_ENERGY if enabled else 0.0
 
+func _place_anchor_room_landmark(root: Node3D, body: StaticBody3D, kind: String) -> void:
+	if kind == "red_room":
+		var red_light := OmniLight3D.new()
+		red_light.color = Color(1.0, 0.14, 0.04)
+		red_light.omni_range = 14.0
+		red_light.energy = 3.2
+		red_light.position = Vector3(CELL * 0.5, 2.6, CELL * 0.5)
+		red_light.shadow_enabled = true
+		root.add_child(red_light)
+
+		_add_box(root, body, Vector3(3.8, 0.02, 3.8), Vector3(CELL * 0.5, 0.01, CELL * 0.5), _puddle_mat, false)
+
+		if is_instance_valid(_chair_scene):
+			var chair = _chair_scene.instantiate()
+			chair.position = Vector3(CELL * 0.4, 0.25, CELL * 0.4)
+			chair.rotation = Vector3(1.2, 0.6, 0.7)
+			root.add_child(chair)
+
+	elif kind == "flooded_lounge":
+		_add_box(root, body, Vector3(3.8, 0.02, 3.8), Vector3(CELL * 0.5, 0.01, CELL * 0.5), _puddle_mat, false)
+
+		var cyan_panel := MeshInstance3D.new()
+		var pm := BoxMesh.new()
+		pm.size = Vector3(2.4, 0.06, 1.2)
+		cyan_panel.mesh = pm
+		var cmat := StandardMaterial3D.new()
+		cmat.albedo_color = Color(0.18, 0.8, 0.96)
+		cmat.emission_enabled = true
+		cmat.emission = Color(0.12, 0.85, 1.0)
+		cmat.emission_energy_multiplier = 3.2
+		cmat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		cyan_panel.material_override = cmat
+		cyan_panel.position = Vector3(CELL * 0.5, WALL_H - 0.06, CELL * 0.5)
+		root.add_child(cyan_panel)
+
+		var cyan_light := OmniLight3D.new()
+		cyan_light.color = Color(0.18, 0.8, 1.0)
+		cyan_light.omni_range = 12.0
+		cyan_light.energy = 2.5
+		cyan_light.position = Vector3(CELL * 0.5, 2.5, CELL * 0.5)
+		root.add_child(cyan_light)
+
+		if is_instance_valid(_wet_floor_scene):
+			var sign_node = _wet_floor_scene.instantiate()
+			sign_node.position = Vector3(CELL * 0.5, 0.0, CELL * 0.5)
+			root.add_child(sign_node)
+
+	elif kind == "archive_shrine":
+		var amber_light := OmniLight3D.new()
+		amber_light.color = Color(0.98, 0.62, 0.2)
+		amber_light.omni_range = 12.0
+		amber_light.energy = 2.8
+		amber_light.position = Vector3(CELL * 0.5, 2.6, CELL * 0.5)
+		amber_light.shadow_enabled = true
+		root.add_child(amber_light)
+
+		# Spawn VHS TV & Player Deck in the Archive Shrine Anchor Room
+		var vhs_script := load("res://scripts/world/vhs_tv_controller.gd")
+		if vhs_script != null:
+			var vhs_tv := Node3D.new()
+			vhs_tv.set_script(vhs_script)
+			vhs_tv.name = "VHSTV"
+			vhs_tv.position = Vector3(CELL * 0.5, 0.0, CELL * 0.5)
+			root.add_child(vhs_tv)
+
+		if is_instance_valid(_chair_scene):
+			for i in 3:
+				var chair = _chair_scene.instantiate()
+				var angle := float(i) * TAU / 3.0
+				chair.position = Vector3(CELL * 0.5 + cos(angle) * 1.5, 0.0, CELL * 0.5 + sin(angle) * 1.5)
+				chair.rotation.y = angle + PI
+				root.add_child(chair)
+
 func _add_box(root: Node3D, body: StaticBody3D, size: Vector3, pos: Vector3, mat: StandardMaterial3D, collide: bool) -> void:
 	var mi := MeshInstance3D.new()
 	var bm := BoxMesh.new()
@@ -411,6 +632,349 @@ func _add_box(root: Node3D, body: StaticBody3D, size: Vector3, pos: Vector3, mat
 		cs.shape = bs
 		cs.position = pos
 		body.add_child(cs)
+
+
+func _add_box_collider(body: StaticBody3D, size: Vector3, pos: Vector3) -> void:
+	var collision := CollisionShape3D.new()
+	var shape := BoxShape3D.new()
+	shape.size = size
+	collision.shape = shape
+	collision.position = pos
+	body.add_child(collision)
+
+
+# ---------------------------------------------------------------------------
+# Procedural room formations and environmental dressing
+# ---------------------------------------------------------------------------
+## Dressing varies with the run seed but remains deterministic for every co-op
+## peer. It never changes maze edges: corridor pathfinding and objectives keep
+## the exact same walkable graph.
+func _decor_hash(c: Vector2i, salt: int) -> float:
+	return _hash3(c.x, c.y, salt + posmod(_run_seed, 100000) * 37)
+
+
+func _neighbor_in_direction(c: Vector2i, direction: int) -> Vector2i:
+	match direction:
+		DIR_E:
+			return c + Vector2i(1, 0)
+		DIR_N:
+			return c + Vector2i(0, 1)
+		DIR_W:
+			return c + Vector2i(-1, 0)
+		_:
+			return c + Vector2i(0, -1)
+
+
+func _open_directions(c: Vector2i) -> Array[int]:
+	var directions: Array[int] = []
+	for direction in [DIR_E, DIR_N, DIR_W, DIR_S]:
+		if not _edge_between(c, _neighbor_in_direction(c, direction)):
+			directions.append(direction)
+	return directions
+
+
+func _closed_directions(c: Vector2i) -> Array[int]:
+	var directions: Array[int] = []
+	for direction in [DIR_E, DIR_N, DIR_W, DIR_S]:
+		if _edge_between(c, _neighbor_in_direction(c, direction)):
+			directions.append(direction)
+	return directions
+
+
+## Rotation that maps local +Z to the selected cell edge.
+func _direction_yaw(direction: int) -> float:
+	match direction:
+		DIR_E:
+			return PI * 0.5
+		DIR_N:
+			return 0.0
+		DIR_W:
+			return -PI * 0.5
+		_:
+			return PI
+
+
+func _new_structure(root: Node3D, name: String, direction: int) -> Dictionary:
+	var structure := Node3D.new()
+	structure.name = name
+	structure.rotation.y = _direction_yaw(direction)
+	root.add_child(structure)
+	var body := StaticBody3D.new()
+	body.collision_layer = 1
+	body.collision_mask = 0
+	structure.add_child(body)
+	return {"root": structure, "body": body}
+
+
+## Adds architecture only where the existing graph already supports it. A
+## one-exit cell becomes a real enterable dark pocket; open rooms sometimes get
+## an asymmetric portal/threshold while retaining a 2.4 m central opening.
+func _place_room_formation(root: Node3D, c: Vector2i, open_directions: Array[int]) -> String:
+	if open_directions.size() == 1 \
+			and _decor_hash(c, 1201) < DARK_ALCOVE_CHANCE:
+		_build_dark_alcove(root, c, open_directions[0])
+		return "dark_alcove"
+	if open_directions.size() >= 2 \
+			and _decor_hash(c, 1202) < ROOM_THRESHOLD_CHANCE:
+		var pick := mini(
+			int(_decor_hash(c, 1203) * open_directions.size()),
+			open_directions.size() - 1)
+		_build_room_threshold(root, c, open_directions[pick])
+		return "room_threshold"
+	return ""
+
+
+func _build_dark_alcove(root: Node3D, c: Vector2i, opening_direction: int) -> void:
+	var parts := _new_structure(root, "DarkAlcove_%d_%d" % [c.x, c.y], opening_direction)
+	var structure := parts["root"] as Node3D
+	var body := parts["body"] as StaticBody3D
+	# Chunky entrance walls create a narrow black mouth without blocking the
+	# centreline used by players, SNUS and the Entity.
+	_add_box(structure, body, Vector3(0.72, 2.30, 1.05), Vector3(-1.64, 1.15, 1.47), _wall_dark_mat, true)
+	_add_box(structure, body, Vector3(0.72, 2.30, 1.05), Vector3(1.64, 1.15, 1.47), _wall_dark_mat, true)
+	# Bottom at 2.64 m: clears the Entity's 2.5 m navigation capsule as well as
+	# the player's 1.7 m body capsule.
+	_add_box(structure, body, Vector3(CELL, 0.36, 0.58), Vector3(0.0, 2.82, 1.72), _wall_dark_mat, true)
+	# CX31 — real (very dark) wallpaper, ceiling tiles and carpet instead of the
+	# old unshaded void planes. Side returns close the recess so it stops reading
+	# as a flat black rectangle floating on a lit wall.
+	_add_box(structure, body, Vector3(3.25, 0.018, 3.15), Vector3(0.0, 0.012, -0.22), _floor_dark_mat, false)
+	_add_box(structure, body, Vector3(3.35, 2.48, 0.035), Vector3(0.0, 1.24, -1.805), _alcove_wall_mat, false)
+	_add_box(structure, body, Vector3(0.035, 2.48, 3.15), Vector3(-1.66, 1.24, -0.22), _alcove_wall_mat, false)
+	_add_box(structure, body, Vector3(0.035, 2.48, 3.15), Vector3(1.66, 1.24, -0.22), _alcove_wall_mat, false)
+	_add_box(structure, body, Vector3(3.35, 0.025, 2.75), Vector3(0.0, 2.955, -0.33), _alcove_ceil_mat, false)
+	# One failed, nearly-dead fixture. Without it the recess has no light source
+	# at all, which is why the darkness looked like a rendering error rather than
+	# a room whose lamp gave up. Shadows stay off: this is fill, not a lamp.
+	var ember := OmniLight3D.new()
+	ember.name = "AlcoveEmber"
+	ember.light_color = Color(0.86, 0.83, 0.62)
+	ember.light_energy = 0.34
+	ember.omni_range = 4.6
+	ember.omni_attenuation = 1.6
+	ember.shadow_enabled = false
+	ember.position = Vector3(0.0, 2.42, -0.55)
+	structure.add_child(ember)
+
+
+func _build_room_threshold(root: Node3D, c: Vector2i, opening_direction: int) -> void:
+	var parts := _new_structure(root, "RoomThreshold_%d_%d" % [c.x, c.y], opening_direction)
+	var structure := parts["root"] as Node3D
+	var body := parts["body"] as StaticBody3D
+	var flip := -1.0 if _decor_hash(c, 1210) < 0.5 else 1.0
+	# One wing projects further than the other, breaking the repeated square-cell
+	# silhouette while a generous central route remains unobstructed.
+	_add_box(structure, body, Vector3(0.68, 2.36, 1.55), Vector3(1.66 * flip, 1.18, 1.22), _wall_dirty_mat, true)
+	_add_box(structure, body, Vector3(0.68, 2.36, 0.70), Vector3(-1.66 * flip, 1.18, 1.64), _wall_mat, true)
+	_add_box(structure, body, Vector3(CELL, 0.36, 0.52), Vector3(0.0, 2.82, 1.73), _wall_mat, true)
+
+
+## Root on a real wall, with local +Z pointing into the walkable cell.
+func _wall_dressing_root(root: Node3D, direction: int, name: String) -> Node3D:
+	var cluster := Node3D.new()
+	cluster.name = name
+	match direction:
+		DIR_E:
+			cluster.position = Vector3(1.79, 0.0, 0.0)
+			cluster.rotation.y = -PI * 0.5
+		DIR_N:
+			cluster.position = Vector3(0.0, 0.0, 1.79)
+			cluster.rotation.y = PI
+		DIR_W:
+			cluster.position = Vector3(-1.79, 0.0, 0.0)
+			cluster.rotation.y = PI * 0.5
+		DIR_S:
+			cluster.position = Vector3(0.0, 0.0, -1.79)
+			cluster.rotation.y = 0.0
+	root.add_child(cluster)
+	return cluster
+
+
+func _place_cell_dressing(root: Node3D, c: Vector2i, formation: String) -> void:
+	if _decor_hash(c, 1301) >= MAP_DRESSING_CHANCE:
+		return
+	var closed := _closed_directions(c)
+	var kind := int(_decor_hash(c, 1302) * 6.0) % 6
+	# Keep the black recess visually legible: only a lone chair or maintenance
+	# trace may appear inside it, never a bright cabinet/door cluster.
+	if formation == "dark_alcove":
+		kind = 1 if _decor_hash(c, 1303) < 0.62 else 2
+	match kind:
+		0:
+			if closed.is_empty():
+				_spawn_chair_vignette(root, c)
+			else:
+				_spawn_storage_cluster(root, c, closed)
+		1:
+			_spawn_chair_vignette(root, c)
+		2:
+			_spawn_maintenance_trace(root, c)
+		3:
+			# CX31 — the sealed office door used to live here. The level now
+			# contains exactly ONE door and it is the exit, so a decorative one
+			# that never opens can no longer be mistaken for the way out.
+			_spawn_hanging_fixture(root, c)
+		4:
+			_spawn_hanging_fixture(root, c)
+		_:
+			if closed.is_empty():
+				_spawn_chair_vignette(root, c)
+			else:
+				_spawn_clipped_furniture(root, c, closed)
+
+
+func _pick_direction(c: Vector2i, directions: Array[int], salt: int) -> int:
+	var index := mini(int(_decor_hash(c, salt) * directions.size()), directions.size() - 1)
+	return directions[index]
+
+
+## Corners stay clear of every centre-to-edge route used by corridor_path.
+func _safe_corner_position(c: Vector2i, salt: int, distance: float = 1.22) -> Vector3:
+	var corner := int(_decor_hash(c, salt) * 4.0) % 4
+	return Vector3(
+		distance if corner in [0, 1] else -distance,
+		0.0,
+		distance if corner in [0, 2] else -distance)
+
+
+func _spawn_storage_cluster(root: Node3D, c: Vector2i, closed: Array[int]) -> void:
+	var direction := _pick_direction(c, closed, 1310)
+	var cluster := _wall_dressing_root(root, direction, "AbandonedStorage")
+	var body := StaticBody3D.new()
+	body.name = "StorageCollision"
+	body.collision_layer = 1
+	body.collision_mask = 0
+	cluster.add_child(body)
+	var flip := -1.0 if _decor_hash(c, 1311) < 0.5 else 1.0
+	_add_box(cluster, body, Vector3(0.58, 1.34, 0.46), Vector3(-0.52 * flip, 0.67, 0.25), _office_metal_mat, true)
+	# Drawer seams turn the plain cabinet block into readable office furniture.
+	for drawer in range(3):
+		_add_box(cluster, body, Vector3(0.48, 0.018, 0.025), Vector3(-0.52 * flip, 0.36 + drawer * 0.33, 0.493), _void_mat, false)
+	_add_box(cluster, body, Vector3(0.63, 0.42, 0.52), Vector3(0.43 * flip, 0.21, 0.30), _cardboard_mat, true)
+	_add_box(cluster, body, Vector3(0.42, 0.34, 0.40), Vector3(0.70 * flip, 0.59, 0.25), _cardboard_mat, true)
+
+
+func _spawn_chair_vignette(root: Node3D, c: Vector2i) -> void:
+	var angle := _decor_hash(c, 1320) * TAU
+	var position := _safe_corner_position(c, 1322)
+	if _chair_scene != null:
+		var chair := _chair_scene.instantiate() as Node3D
+		chair.name = "AbandonedChair"
+		root.add_child(chair)
+		ModelUtils.scale_to_height(chair, 0.72)
+		ModelUtils.ground_model(chair, 0.0)
+		chair.position += position
+		chair.rotation.y = angle + PI + _decor_hash(c, 1321) * 0.7
+	# Simple physical proxy: the imported broken chair now blocks movement and
+	# environment LOS without expensive per-mesh convex collision.
+	var body := StaticBody3D.new()
+	body.name = "ChairVignetteCollision"
+	body.collision_layer = 1
+	body.collision_mask = 0
+	root.add_child(body)
+	_add_box_collider(body, Vector3(0.64, 0.72, 0.64), position + Vector3.UP * 0.36)
+	# The carton is physical too, but sits deeper in the same safe corner.
+	var inward_x := -signf(position.x) * 0.38
+	var carton_position := position + Vector3(inward_x, 0.15, 0.02 * signf(position.z))
+	_add_box(root, body, Vector3(0.43, 0.30, 0.38), carton_position, _cardboard_mat, true)
+
+
+func _spawn_maintenance_trace(root: Node3D, c: Vector2i) -> void:
+	var angle := _decor_hash(c, 1330) * TAU
+	var position := _safe_corner_position(c, 1332, 1.18)
+	var puddle := MeshInstance3D.new()
+	puddle.name = "OldCeilingLeak"
+	var puddle_mesh := CylinderMesh.new()
+	puddle_mesh.top_radius = 1.75
+	puddle_mesh.bottom_radius = 1.55
+	puddle_mesh.height = 0.012
+	puddle.mesh = puddle_mesh
+	puddle.material_override = _puddle_mat
+	puddle.position = position + Vector3(0.12, 0.008, -0.08)
+	puddle.scale = Vector3(1.3, 1.0, 1.3)
+	puddle.rotation.y = angle
+	root.add_child(puddle)
+
+	# Area3D trigger for player & entity slipping physics
+	var slip_area := Area3D.new()
+	slip_area.name = "WetFloorHazardArea"
+	slip_area.add_to_group("wet_floor")
+	slip_area.set_meta("is_wet_floor", true)
+	slip_area.position = puddle.position
+	var slip_col := CollisionShape3D.new()
+	var slip_shape := CylinderShape3D.new()
+	slip_shape.radius = 2.0
+	slip_shape.height = 1.2
+	slip_col.shape = slip_shape
+	slip_area.add_child(slip_col)
+	root.add_child(slip_area)
+
+	if _wet_floor_scene != null:
+		var sign := _wet_floor_scene.instantiate() as Node3D
+		sign.name = "ForgottenWetFloorSign"
+		root.add_child(sign)
+		ModelUtils.scale_to_height(sign, 0.68)
+		ModelUtils.ground_model(sign, 0.0)
+		var sign_position := position + Vector3(-0.18 * signf(position.x), 0.0, -0.12 * signf(position.z))
+		sign.position += sign_position
+		sign.rotation.y = angle + _decor_hash(c, 1331) * 1.1
+		var sign_body := StaticBody3D.new()
+		sign_body.name = "WetFloorSignCollision"
+		sign_body.collision_layer = 1
+		sign_body.collision_mask = 0
+		root.add_child(sign_body)
+		_add_box_collider(sign_body, Vector3(0.42, 0.68, 0.34), sign_position + Vector3.UP * 0.34)
+
+
+## Film-inspired "noclip" furniture: familiar office chairs intersect one
+## another and the wall at implausible angles. It stays non-colliding and tight
+## to the perimeter so the visual oddity cannot trap either player or Entity.
+func _spawn_clipped_furniture(root: Node3D, c: Vector2i, closed: Array[int]) -> void:
+	var direction := _pick_direction(c, closed, 1345)
+	var cluster := _wall_dressing_root(root, direction, "ClippedFurniturePile")
+	var pile_body := StaticBody3D.new()
+	pile_body.name = "ClippedFurnitureCollision"
+	pile_body.collision_layer = 1
+	pile_body.collision_mask = 0
+	cluster.add_child(pile_body)
+	_add_box_collider(pile_body, Vector3(1.34, 1.72, 0.74), Vector3(0.0, 0.86, 0.30))
+	if _chair_scene == null:
+		_add_box(cluster, pile_body, Vector3(1.25, 0.58, 0.72), Vector3(0.0, 0.29, 0.28), _cardboard_mat, false)
+		return
+	var poses: Array[Dictionary] = [
+		{"p": Vector3(-0.48, 0.02, 0.22), "r": Vector3(0.0, -18.0, -9.0)},
+		{"p": Vector3(0.28, 0.38, 0.12), "r": Vector3(22.0, 31.0, 67.0)},
+		{"p": Vector3(0.05, 0.92, -0.04), "r": Vector3(-12.0, -42.0, -34.0)},
+	]
+	for index in range(poses.size()):
+		var chair := _chair_scene.instantiate() as Node3D
+		chair.name = "ClippedChair_%d" % index
+		cluster.add_child(chair)
+		ModelUtils.scale_to_height(chair, 0.68)
+		ModelUtils.ground_model(chair, 0.0)
+		chair.position += Vector3(poses[index]["p"])
+		chair.rotation_degrees = Vector3(poses[index]["r"])
+
+
+func _spawn_hanging_fixture(root: Node3D, c: Vector2i) -> void:
+	var fixture := Node3D.new()
+	fixture.name = "CrookedFluorescent"
+	fixture.position = Vector3(
+		lerpf(-0.75, 0.75, _decor_hash(c, 1350)),
+		2.78,
+		lerpf(-0.75, 0.75, _decor_hash(c, 1351)))
+	fixture.rotation.y = _decor_hash(c, 1352) * TAU
+	fixture.rotation.z = lerpf(-0.16, 0.16, _decor_hash(c, 1353))
+	root.add_child(fixture)
+	var dummy_body := StaticBody3D.new()
+	dummy_body.name = "HangingFixtureCollision"
+	dummy_body.collision_layer = 1
+	dummy_body.collision_mask = 0
+	fixture.add_child(dummy_body)
+	_add_box(fixture, dummy_body, Vector3(1.75, 0.075, 0.32), Vector3.ZERO, _office_metal_mat, true)
+	_add_box(fixture, dummy_body, Vector3(1.48, 0.025, 0.18), Vector3(0.0, -0.05, 0.0), _panel_mat, false)
+	# One end hangs lower on a short black cable.
+	_add_box(fixture, dummy_body, Vector3(0.018, 0.34, 0.018), Vector3(-0.72, 0.20, 0.0), _void_mat, false)
 
 func _place_anomaly(root: Node3D, c: Vector2i, data: Dictionary) -> void:
 	var kind := int(_hash3(c.x, c.y, 333) * 2.0) % 2
@@ -463,10 +1027,51 @@ func _free_cell(c: Vector2i) -> void:
 # Lighting
 # ---------------------------------------------------------------------------
 func _update_lights(center: Vector2i) -> void:
+	# CX34 — the exit room is exempt from the light budget so the beacon can
+	# never be culled. That was free while the exit only existed for the last
+	# minute of a run; since CX31 it is built at run start, so its lamp is
+	# switched off while the player is nowhere near it.
+	_update_exit_light_presence(center)
+	var candidates: Array[Dictionary] = []
 	for c in _cells.keys():
-		var d = _cells[c]
-		var near: bool = abs(c.x - center.x) <= LIGHT_RADIUS and abs(c.y - center.y) <= LIGHT_RADIUS
-		var wants: bool = near and not bool(d["dark"]) and d.get("panel_mat") != null
+		var d: Dictionary = _cells[c]
+		if bool(d["exit"]) or bool(d["dark"]) or d.get("panel_mat") == null:
+			continue
+		var offset := Vector2(float(c.x - center.x), float(c.y - center.y))
+		var distance_sq: float = offset.length_squared()
+		candidates.append({"cell": c, "distance_sq": distance_sq})
+
+	candidates.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+		var distance_a := float(a["distance_sq"])
+		var distance_b := float(b["distance_sq"])
+		if not is_equal_approx(distance_a, distance_b):
+			return distance_a < distance_b
+		# Stable tie-break prevents Dictionary iteration order from swapping equal
+		# distance lamps between clients or repeated updates.
+		var cell_a: Vector2i = a["cell"]
+		var cell_b: Vector2i = b["cell"]
+		return cell_a.x < cell_b.x if cell_a.x != cell_b.x else cell_a.y < cell_b.y
+	)
+	var active_cells: Dictionary = {}
+	for index in mini(candidates.size(), MAX_STREAMED_LIGHTS):
+		active_cells[candidates[index]["cell"]] = true
+
+	# First detach lights leaving the budget so a quick 180-degree turn cannot
+	# temporarily exceed the renderer limit before queue_free runs.
+	for c in _cells.keys():
+		var d: Dictionary = _cells[c]
+		if bool(d["exit"]) or active_cells.has(c) or d["light"] == null:
+			continue
+		if is_instance_valid(d["light"]):
+			var old_light := d["light"] as OmniLight3D
+			if old_light.get_parent() != null:
+				old_light.get_parent().remove_child(old_light)
+			old_light.queue_free()
+		d["light"] = null
+
+	for c in active_cells.keys():
+		var d: Dictionary = _cells[c]
+		var wants := not bool(d["dark"]) and d.get("panel_mat") != null
 		if wants and d["light"] == null:
 			# Short throw + hard falloff: each panel lights its own pool and the
 			# corridor between panels stays in genuine penumbra.
@@ -479,10 +1084,6 @@ func _update_lights(center: Vector2i) -> void:
 			lg.position = Vector3(0, WALL_H - 0.2, 0)
 			d["node"].add_child(lg)
 			d["light"] = lg
-		elif not wants and d["light"] != null:
-			if is_instance_valid(d["light"]):
-				d["light"].queue_free()
-			d["light"] = null
 
 func _animate_lights(delta: float) -> void:
 	var flicker_speed := 2.2 if _flicker_target > _flicker else 0.9
@@ -501,8 +1102,9 @@ func _animate_lights(delta: float) -> void:
 		var prox_flicker := 0.0
 		if is_instance_valid(fig):
 			var cell_pos := Vector3(c.x * 4.0, 1.8, c.y * 4.0)
-			var dist_to_fig := cell_pos.distance_to(fig.global_position)
-			if dist_to_fig < 8.0:
+			var distance_sq := cell_pos.distance_squared_to(fig.global_position)
+			if distance_sq < 64.0:
+				var dist_to_fig := sqrt(distance_sq)
 				prox_flicker = clampf(1.0 - (dist_to_fig / 8.0), 0.0, 1.0)
 
 		var seed_v: float = d["flick_seed"]
@@ -669,24 +1271,106 @@ func get_phone_node_in_cell(cell: Vector2i) -> Node3D:
 # ---------------------------------------------------------------------------
 func enable_exit() -> void:
 	_exit_available = true
+	# Do not wait for the player to cross another cell boundary: the mission and
+	# the physical door become active on the exact same frame.
+	_maybe_place_exit(_cur_cell)
+	_unseal_exit()
 
-# The one true exit sits at a FIXED, deep cell so every co-op client agrees
-# on where it is. It only spawns once the snus have unlocked it.
-const EXIT_CELL := Vector2i(14, -16)
+
+## CX31 — the one real door now stands in the world from the first second, so it
+## can be found early and answer "still locked". This seal is what actually keeps
+## the player in until both objectives are done.
+func _seal_exit(portal_root: Node3D) -> void:
+	if _exit_available or is_instance_valid(_exit_seal):
+		return
+	var seal := StaticBody3D.new()
+	seal.name = "ExitSeal"
+	seal.collision_layer = 1
+	seal.collision_mask = 0
+	var shape := CollisionShape3D.new()
+	var box := BoxShape3D.new()
+	box.size = Vector3(CELL, WALL_H, 0.4)
+	shape.shape = box
+	shape.position = Vector3(0.0, WALL_H * 0.5, -1.62)
+	seal.add_child(shape)
+	portal_root.add_child(seal)
+	_exit_seal = seal
+
+
+func _unseal_exit() -> void:
+	if is_instance_valid(_exit_seal):
+		_exit_seal.queue_free()
+	_exit_seal = null
+	# The room goes from "lit but shut" to the full beacon on override.
+	var d = _cells.get(_exit_cell)
+	if d == null:
+		return
+	d["base_energy"] = 2.4
+	if d.get("panel_mat") is StandardMaterial3D:
+		(d["panel_mat"] as StandardMaterial3D).emission_energy_multiplier = 2.4
+	var light = d.get("light")
+	if light is OmniLight3D:
+		(light as OmniLight3D).light_energy = 2.4
+
+
+## True while the door exists but the emergency override has not been completed.
+## The exit lamp only draws while the player is within streaming range of it.
+## Its emissive panel stays on, so the room still reads as the beacon on arrival.
+func _update_exit_light_presence(center: Vector2i) -> void:
+	if not _exit_placed:
+		return
+	var d = _cells.get(_exit_cell)
+	if d == null:
+		return
+	var light = d.get("light")
+	if not (light is OmniLight3D):
+		return
+	var near_exit := maxi(
+		absi(_exit_cell.x - center.x), absi(_exit_cell.y - center.y)) <= VIEW_RADIUS
+	(light as OmniLight3D).visible = near_exit
+
+
+func is_exit_locked() -> bool:
+	return _exit_placed and not _exit_available
+
+
+## Where the door leaf actually is, for the proximity prompt. Zero until placed.
+func exit_door_position() -> Vector3:
+	return _exit_door_base if _exit_placed else Vector3.ZERO
+
+func _select_exit_cell() -> void:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = _run_seed ^ 0x45584954
+	var candidates: Array[Vector2i] = []
+	# A real exit belongs on an outside wall. Randomize between the north and
+	# south edges and along each edge while keeping a corridor path from spawn.
+	for edge_y in [-16, 16]:
+		for x in range(-14, 15):
+			var candidate := Vector2i(x, edge_y)
+			if not is_cell_open(candidate):
+				continue
+			if corridor_path(candidate, Vector2i.ZERO, 1800).is_empty():
+				continue
+			candidates.append(candidate)
+	if candidates.is_empty():
+		_exit_cell = Vector2i(rng.randi_range(-12, 12), -16)
+	else:
+		_exit_cell = candidates[rng.randi_range(0, candidates.size() - 1)]
 
 func _maybe_place_exit(_pc: Vector2i) -> void:
-	if not _exit_available or _exit_placed:
+	# CX31 — no longer gated on `_exit_available`. The door is built with the run
+	# and simply stays sealed; `enable_exit()` only removes the seal.
+	if _exit_placed:
 		return
-	_exit_cell = EXIT_CELL
-	if not _cells.has(EXIT_CELL):
-		_build_cell(EXIT_CELL)
-	_spawn_exit_room(EXIT_CELL)
+	if _exit_cell == Vector2i.ZERO:
+		_select_exit_cell()
+	if not _cells.has(_exit_cell):
+		_build_cell(_exit_cell)
+	_spawn_exit_room(_exit_cell)
 	_exit_placed = true
-	# Point the way: a faint beacon glow visible through the fog toward the exit.
-	exit_spawned.emit(world_center(EXIT_CELL))
 
 func exit_world_pos() -> Vector3:
-	return world_center(EXIT_CELL)
+	return _exit_door_base if _exit_placed else world_center(_exit_cell)
 
 func _spawn_exit_room(c: Vector2i) -> void:
 	var d = _cells.get(c)
@@ -694,28 +1378,35 @@ func _spawn_exit_room(c: Vector2i) -> void:
 		return
 	var root: Node3D = d["node"]
 	# Cooler, brighter, quieter room. Recolor its panel and add a distinct light.
+	# CX31 — while the door is still sealed the room is lit but muted; the
+	# override brightens it, so "THE EXIT IS OPEN" still lands as a change.
 	if d.get("panel_mat"):
 		var pm := d["panel_mat"] as StandardMaterial3D
 		pm.emission = Color(0.8, 0.95, 1.0)
-		pm.emission_energy_multiplier = 2.4
-	d["base_energy"] = 2.4
+		pm.emission_energy_multiplier = 2.4 if _exit_available else 1.1
+	d["base_energy"] = 2.4 if _exit_available else 1.1
 	d["dark"] = false
 	var lg := OmniLight3D.new()
 	lg.light_color = Color(0.8, 0.95, 1.0)
-	lg.light_energy = 2.4
+	lg.light_energy = 2.4 if _exit_available else 1.1
 	lg.omni_range = 9.0
 	lg.shadow_enabled = false
 	lg.position = Vector3(0, WALL_H - 0.2, 0)
 	root.add_child(lg)
 	d["light"] = lg
 	d["exit"] = true
-	_carve_exit_opening(root)
-	_add_exit_void(root)
+	var outward_z := -1 if c.y < 0 else 1
+	_carve_exit_opening(root, outward_z)
+	var portal_root := Node3D.new()
+	portal_root.name = "ExitPortal"
+	portal_root.rotation.y = 0.0 if outward_z < 0 else PI
+	root.add_child(portal_root)
+	_add_exit_void(portal_root)
 
 	# The one real door.
 	if _exit_door_scene:
 		var door: Node3D = _exit_door_scene.instantiate()
-		root.add_child(door)
+		portal_root.add_child(door)
 		ModelUtils.scale_to_height(door, 2.3)
 		ModelUtils.ground_model(door, 0.0)
 		door.position += Vector3(0, 0, -1.6)
@@ -727,7 +1418,7 @@ func _spawn_exit_room(c: Vector2i) -> void:
 		slab.mesh = bm
 		slab.material_override = _exit_mat
 		slab.position = Vector3(0, 1.1, -1.6)
-		root.add_child(slab)
+		portal_root.add_child(slab)
 
 	# Trigger area at the doorway.
 	var area := Area3D.new()
@@ -740,24 +1431,26 @@ func _spawn_exit_room(c: Vector2i) -> void:
 	# The capsule reaches this only after its camera has crossed the door plane.
 	acs.position = Vector3(0, 1.2, -2.35)
 	area.add_child(acs)
-	root.add_child(area)
+	portal_root.add_child(area)
 	area.body_entered.connect(_on_exit_body_entered)
 	_exit_area = area
+	_seal_exit(portal_root)
 
-	_exit_door_base = root.global_position + Vector3(0, 0, -1.6)
+	_exit_door_base = portal_root.to_global(Vector3(0, 0, -1.6))
+	_exit_forward = (portal_root.global_basis * Vector3.FORWARD).normalized()
 	exit_spawned.emit(_exit_door_base)
 
-## Replace the solid boundary cap with a real doorway. The boundary cap has no
-## collision, but leaving its full wall mesh behind made the camera pass through
-## wallpaper before the ending trigger fired.
-func _carve_exit_opening(root: Node3D) -> void:
+## Replace the solid boundary wall and its collision with a collidable doorway
+## frame. Removing only the mesh leaves an invisible wall across the exit.
+func _carve_exit_opening(root: Node3D, outward_z: int) -> void:
 	var wall_material: Material = _wall_mat
+	var boundary_z := float(outward_z) * CELL * 0.5
 	for child in root.get_children():
 		var wall := child as MeshInstance3D
 		if not wall or not wall.mesh is BoxMesh:
 			continue
 		var wall_size := (wall.mesh as BoxMesh).size
-		if absf(wall.position.z + CELL * 0.5) < 0.01 \
+		if absf(wall.position.z - boundary_z) < 0.01 \
 				and is_equal_approx(wall_size.x, CELL) \
 				and is_equal_approx(wall_size.y, WALL_H):
 			if wall.material_override:
@@ -765,15 +1458,30 @@ func _carve_exit_opening(root: Node3D) -> void:
 			wall.visible = false
 			wall.queue_free()
 			break
+	for child in root.get_children():
+		var wall_body := child as StaticBody3D
+		if not wall_body:
+			continue
+		for shape_child in wall_body.get_children():
+			var collision := shape_child as CollisionShape3D
+			if not collision or not collision.shape is BoxShape3D:
+				continue
+			var wall_size := (collision.shape as BoxShape3D).size
+			if absf(collision.position.z - boundary_z) < 0.01 \
+					and is_equal_approx(wall_size.x, CELL) \
+					and is_equal_approx(wall_size.y, WALL_H):
+				collision.disabled = true
+				collision.queue_free()
+				break
 
 	const OPENING_WIDTH := 1.55
 	const OPENING_HEIGHT := 2.35
 	var side_width := (CELL - OPENING_WIDTH) * 0.5
 	var side_offset := OPENING_WIDTH * 0.5 + side_width * 0.5
-	_add_exit_wall_piece(root, Vector3(side_width, WALL_H, 0.35), Vector3(-side_offset, WALL_H * 0.5, -CELL * 0.5), wall_material)
-	_add_exit_wall_piece(root, Vector3(side_width, WALL_H, 0.35), Vector3(side_offset, WALL_H * 0.5, -CELL * 0.5), wall_material)
+	_add_exit_wall_piece(root, Vector3(side_width, WALL_H, 0.35), Vector3(-side_offset, WALL_H * 0.5, boundary_z), wall_material)
+	_add_exit_wall_piece(root, Vector3(side_width, WALL_H, 0.35), Vector3(side_offset, WALL_H * 0.5, boundary_z), wall_material)
 	var header_height := WALL_H - OPENING_HEIGHT
-	_add_exit_wall_piece(root, Vector3(OPENING_WIDTH, header_height, 0.35), Vector3(0.0, OPENING_HEIGHT + header_height * 0.5, -CELL * 0.5), wall_material)
+	_add_exit_wall_piece(root, Vector3(OPENING_WIDTH, header_height, 0.35), Vector3(0.0, OPENING_HEIGHT + header_height * 0.5, boundary_z), wall_material)
 
 func _add_exit_wall_piece(root: Node3D, size: Vector3, position: Vector3, material: Material) -> void:
 	var piece := MeshInstance3D.new()
@@ -783,6 +1491,16 @@ func _add_exit_wall_piece(root: Node3D, size: Vector3, position: Vector3, materi
 	piece.material_override = material
 	piece.position = position
 	root.add_child(piece)
+	var body := StaticBody3D.new()
+	body.collision_layer = 1
+	body.collision_mask = 0
+	var collision := CollisionShape3D.new()
+	var shape := BoxShape3D.new()
+	shape.size = size
+	collision.shape = shape
+	collision.position = position
+	body.add_child(collision)
+	root.add_child(body)
 
 ## A double-sided, unlit black volume immediately beyond the threshold hides
 ## the streamed maze while the ending camera travels through the doorway.
@@ -804,7 +1522,7 @@ func _add_exit_void(root: Node3D) -> void:
 func exit_transition_view() -> Dictionary:
 	if not _exit_placed:
 		return {}
-	var forward := (global_basis * Vector3(0.0, 0.0, -1.0)).normalized()
+	var forward := _exit_forward
 	var up := global_basis.y.normalized()
 	return {
 		"camera": _exit_door_base + up * 1.55 + forward * 0.78,

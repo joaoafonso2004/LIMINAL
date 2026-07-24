@@ -18,6 +18,14 @@ const END_VIDEO_START_VOLUME_DB := -60.0
 const END_VIDEO_TARGET_VOLUME_DB := -22.0
 const END_VIDEO_AUDIO_FADE_SECONDS := 5.0
 
+# CX30 — victim-only jumpscare. The clip is ~3.29 s, the 3D sequence ~5.48 s at
+# 1.55x, so the layer stays black until `caught` arrives and downed is entered.
+const JUMPSCARE_VIDEO_SCRIPT := "res://scripts/ui/jumpscare_video.gd"
+const JUMPSCARE_DOWNED_FADE := 0.52
+# Hard ceiling: if the director is freed mid-sequence and `caught` never lands,
+# the black screen must never become a permanent soft-lock.
+const JUMPSCARE_MAX_HOLD := 14.0
+
 # Timings (seconds) — pacing knobs live in scripts/tuning.gd
 const FINAL_PHASE_TIME := Tuning.FINAL_PHASE_TIME
 
@@ -74,14 +82,15 @@ var _last_safe_player_position := Vector3.ZERO
 var _safe_position_ready := false
 var _fall_recovery_cooldown := 0.0
 const FALL_RECOVERY_Y := -3.0
+# CX31 — how close you must be for the sealed exit door to speak up.
+const EXIT_PROMPT_RANGE := 3.4
 
-# Co-op revive camera: orbit the local body until bleedout expires.
-const DOWNED_CAMERA_RADIUS := 4.2
-const DOWNED_CAMERA_FOCUS_HEIGHT := 0.62
-var _downed_camera_yaw := 0.0
-var _downed_camera_pitch := 0.52
+# CX08-COOP-GROUPED-SPAWN. Set false for production separated co-op spawns.
+const TEST_FORCE_GROUPED_SPAWNS := false
+
 var _downed_body_visual: Node3D = null
-var _downed_scream_timer := 0.0
+var _jumpscare_video: CanvasLayer = null
+var _jumpscare_hold_timer := 0.0
 var _crawl_blood_trail_timer := 0.0
 
 func _ready() -> void:
@@ -103,10 +112,10 @@ func _ready() -> void:
 	_spawn_pause()
 	_spawn_snus()
 	_spawn_snus_ui()
+	add_to_group("game_world")
 	_spawn_lockers()
 	_spawn_world_content()
 	_spawn_extraction()
-	_spawn_mimic()
 	_setup_interact_prompt()
 	_setup_ambient()
 	if is_instance_valid(_player):
@@ -190,7 +199,7 @@ func _setup_intro_screen() -> void:
 	var coop_hint := ""
 	if _is_mp:
 		coop_hint = "\nQ - Scream so nearby teammates can find you"
-		if bool(NetManager.rule("separated_spawns", true)):
+		if _separated_spawns_enabled():
 			coop_hint += "\nYou entered apart. Listen before you call out."
 	var emergency_text := "Emergency Buttons" if _is_mp else "Emergency Button"
 	desc.text = "OBJECTIVE:\nFind 5 Snus, locate the %s, then find the door.\n\nCONTROLS:\nWASD - Move | %s | Ctrl/C - Crouch\nE - Interact%s" % [emergency_text, sprint_hint, coop_hint]
@@ -208,6 +217,13 @@ func _setup_intro_screen() -> void:
 	vbox.add_child(btn)
 	
 	btn.pressed.connect(_on_intro_start_pressed)
+
+func _unhandled_input(event: InputEvent) -> void:
+	if is_instance_valid(_intro_canvas):
+		if event.is_pressed() and not event.is_echo():
+			_on_intro_start_pressed()
+			get_viewport().set_input_as_handled()
+			return
 
 func _on_intro_start_pressed() -> void:
 	if not is_instance_valid(_intro_canvas):
@@ -323,33 +339,32 @@ func _spawn_extraction() -> void:
 	_extraction = Node3D.new()
 	_extraction.set_script(load("res://scripts/world/extraction_manager.gd"))
 	add_child(_extraction)
-	_extraction.setup(_player, _maze, _is_mp, NetManager.is_host if _is_mp else false)
+	_extraction.setup(_player, _maze, _is_mp, NetManager.is_host if _is_mp else false, _run_seed)
 	_extraction.terminal_activated.connect(_on_extraction_terminal_activated)
 	_extraction.extraction_ready.connect(_on_extraction_ready)
 	_extraction.window_reset.connect(_on_extraction_window_reset)
 
-func _spawn_mimic() -> void:
-	if _is_mp and not bool(NetManager.rule("mimic", true)):
-		return
-	_mimic = Node3D.new()
-	_mimic.set_script(load("res://scripts/world/mimic_controller.gd"))
-	add_child(_mimic)
-	_mimic.setup(_player, _camera, _maze, _entity, self)
-
 func living_remote_player_ids() -> Array:
 	return _living_remote_ids()
 
-func mimic_revealed(world_position: Vector3) -> void:
-	if _overlay and _overlay.has_method("pulse"):
-		_overlay.pulse(1.1)
-	if _maze and _maze.has_method("set_flicker"):
-		_maze.set_flicker(0.75)
-		get_tree().create_timer(0.45).timeout.connect(func() -> void:
-			if is_instance_valid(_maze):
-				_maze.set_flicker(0.0))
-	if has_node("/root/AudioManager"):
-		var wrong_step = load("res://assets/audio/sfx/environment/environment_distant_footsteps_echo.mp3")
-		AudioManager.play_sfx_3d(self, wrong_step, world_position, -3.0, 24.0, 0.58)
+## Living (not-downed) remote player bodies, keyed by player_id. Lets the shared
+## roaming entity perceive and hunt every teammate, not just the local player.
+func living_remote_player_bodies() -> Dictionary:
+	var out := {}
+	for pid in _remote_players.keys():
+		if _remote_down.has(pid):
+			continue
+		var rp = _remote_players[pid]
+		if is_instance_valid(rp):
+			out[pid] = rp
+	return out
+
+
+## Resolve the remote body that owns a replicated chase. The Entity director
+## uses it only to share the warning vignette with nearby teammates.
+func remote_player_body(player_id: int) -> Node3D:
+	var body = _remote_players.get(player_id)
+	return body as Node3D if is_instance_valid(body) else null
 
 func _spawn_entity() -> void:
 	_entity = Node3D.new()
@@ -365,6 +380,7 @@ func _spawn_entity() -> void:
 	_entity.jumpscare.connect(_on_jumpscare)
 	_entity.muffle.connect(_on_muffle)
 	_entity.caught.connect(_on_caught)
+	_entity.victim_jumpscare.connect(_on_victim_jumpscare)
 	_entity.chase_ended.connect(_on_chase_ended)
 
 func _spawn_overlay() -> void:
@@ -486,6 +502,7 @@ func _process(delta: float) -> void:
 			AudioManager.play_music(load(FINAL_MUSIC), -16.0, 6.0)
 			AudioManager.set_music_volume(-6.0, 45.0)
 	_tick_secret(delta)
+	_tick_victim_jumpscare(delta)
 	_tick_downed_and_revive(delta)
 	_extraction_interaction_active = bool(_extraction.tick_interaction(delta)) if _extraction and _extraction.has_method("tick_interaction") else false
 	_content_interaction_active = bool(_content.tick_interaction(delta)) if not _extraction_interaction_active and _content and _content.has_method("tick_interaction") else false
@@ -518,33 +535,16 @@ func _tick_out_of_bounds_safety(delta: float) -> void:
 		_last_safe_player_position = _player.global_position
 		_safe_position_ready = true
 
-func _unhandled_input(event: InputEvent) -> void:
-	if not _is_downed:
-		return
-	if event is InputEventMouseButton and event.pressed:
-		if Input.mouse_mode != Input.MOUSE_MODE_CAPTURED:
-			Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
-		get_viewport().set_input_as_handled()
-		return
-	if event is InputEventMouseMotion and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
-		var motion := event as InputEventMouseMotion
-		var sensitivity := 0.0022
-		if has_node("/root/Settings"):
-			sensitivity *= Settings.mouse_sensitivity
-		_downed_camera_yaw = fposmod(_downed_camera_yaw - motion.relative.x * sensitivity, TAU)
-		_downed_camera_pitch = clampf(
-			_downed_camera_pitch - motion.relative.y * sensitivity,
-			deg_to_rad(12.0), deg_to_rad(72.0))
-		get_viewport().set_input_as_handled()
-
 func _tick_downed_and_revive(delta: float) -> void:
 	# 1. Downed local player countdown & spectate live teammate
 	if _is_downed:
 		_incoming_revive_timeout = maxf(0.0, _incoming_revive_timeout - delta)
 		if _incoming_revive_timeout > 0.0:
 			# Revive in progress: PAUSE the 30-second bleedout timer!
-			pass
+			_set_revive_progress(_incoming_revive_progress, true)
 		else:
+			_incoming_revive_progress = 0.0
+			_set_revive_progress(0.0, false)
 			_bleedout_timer -= delta
 
 		# (Automatic screams removed: player now presses Q to scream on demand!)
@@ -569,8 +569,6 @@ func _tick_downed_and_revive(delta: float) -> void:
 				_downed_status.add_theme_color_override("font_color", Color(1.0, 0.3, 0.3, 1.0))
 		if is_instance_valid(_downed_bar):
 			_downed_bar.value = maxf(0.0, _bleedout_timer)
-			
-		_tick_downed_camera(delta)
 			
 		if _bleedout_timer <= 0.0:
 			# Bleedout expired after 30s -> PERMANENTLY DEAD, CANNOT BE REVIVED!
@@ -603,7 +601,7 @@ func _tick_downed_and_revive(delta: float) -> void:
 					_set_revive_progress(_revive_hold_timer, true)
 					NetManager.send("reviving", {"target": downed_rp.player_id, "prog": _revive_hold_timer})
 					if _interact_prompt:
-						_interact_prompt.text = "HOLD [E] TO REVIVE TEAMMATE (%.1fs / 10.0s)" % _revive_hold_timer
+						_interact_prompt.text = "HOLD TO REVIVE TEAMMATE (%.1fs / 10.0s)" % _revive_hold_timer
 						_interact_prompt.visible = true
 					if _revive_hold_timer >= 10.0:
 						# REVIVED!
@@ -620,7 +618,7 @@ func _tick_downed_and_revive(delta: float) -> void:
 					_revive_hold_timer = maxf(0.0, _revive_hold_timer - delta * 2.0)
 					_set_revive_progress(_revive_hold_timer, _revive_hold_timer > 0.0)
 					if _interact_prompt:
-						_interact_prompt.text = "HOLD [E] TO REVIVE TEAMMATE"
+						_interact_prompt.text = "HOLD TO REVIVE TEAMMATE"
 						_interact_prompt.visible = true
 			else:
 				_player.is_reviving = false
@@ -643,55 +641,13 @@ func _get_living_remote_player() -> Node3D:
 				return rp
 	return null
 
-func _tick_downed_camera(delta: float) -> void:
-	if not is_instance_valid(_camera) or not is_instance_valid(_player):
-		return
-	var focus := _player.global_position + Vector3.UP * DOWNED_CAMERA_FOCUS_HEIGHT
-	var horizontal := cos(_downed_camera_pitch) * DOWNED_CAMERA_RADIUS
-	var offset := Vector3(
-		sin(_downed_camera_yaw) * horizontal,
-		sin(_downed_camera_pitch) * DOWNED_CAMERA_RADIUS,
-		cos(_downed_camera_yaw) * horizontal)
-	var desired_position := focus + offset
-
-	# Pull the orbit inward before it can cross a corridor wall.
-	var query := PhysicsRayQueryParameters3D.create(focus, desired_position)
-	query.collision_mask = 1
-	var hit := get_world_3d().direct_space_state.intersect_ray(query)
-	if not hit.is_empty():
-		var toward_focus: Vector3 = (focus - desired_position).normalized()
-		desired_position = Vector3(hit["position"]) + toward_focus * 0.22
-
-	_camera.global_position = _camera.global_position.lerp(
-		desired_position, clampf(delta * 10.0, 0.0, 1.0))
-	_camera.look_at(focus, Vector3.UP)
-	_camera.fov = lerpf(_camera.fov, 68.0, clampf(delta * 6.0, 0.0, 1.0))
-
-func _spawn_local_downed_body() -> void:
-	if is_instance_valid(_downed_body_visual) or not ResourceLoader.exists(REMOTE_PLAYER_SCRIPT):
-		return
-	var body := CharacterBody3D.new()
-	body.name = "LocalDownedBody"
-	body.set_script(load(REMOTE_PLAYER_SCRIPT))
-	body.set("player_id", NetManager.local_player_id if has_node("/root/NetManager") else 0)
-	add_child(body)
-	body.global_position = _player.global_position
-	body.rotation.y = _player.rotation.y
-	body.call("set_downed", true)
-	# The HUD already communicates revive state; leave the body unobstructed.
-	for beacon in body.find_children("*", "Label3D"):
-		(beacon as Label3D).visible = false
-	_downed_body_visual = body
-	if _player.has_method("set_first_person_body_visible"):
-		_player.set_first_person_body_visible(false)
-
 func _restore_local_player_camera() -> void:
 	if is_instance_valid(_downed_body_visual):
 		_downed_body_visual.queue_free()
 	_downed_body_visual = null
 	if is_instance_valid(_player):
 		if _player.has_method("set_first_person_body_visible"):
-			_player.set_first_person_body_visible(true)
+			_player.set_first_person_body_visible(false)
 		if _player.has_method("restore_first_person_camera"):
 			_player.restore_first_person_camera()
 
@@ -732,8 +688,15 @@ func _on_looked_back() -> void:
 
 func _on_player_noise(world_position: Vector3, audible_range: float, kind: String) -> void:
 	# The third signal is the point where the entity learns to distinguish a
-	# sprint from the building's constant noise. Calls remain dangerous always.
-	if kind == "sprint" and _snus and _snus.get_collected() < Tuning.ENTITY_HEARS_FOOTSTEPS_FROM_SNUS:
+	# sprint from the building's constant noise. Footsteps matter from the first
+	# Entity spawn; progression never grants artificial deafness.
+	if _is_mp and not NetManager.is_host:
+		# The host owns a roaming Entity; forward the same footstep event instead
+		# of applying it to a non-authoritative local mirror.
+		NetManager.send("player_noise", {
+			"x": world_position.x, "y": world_position.y, "z": world_position.z,
+			"kind": kind,
+		})
 		return
 	if _entity and _entity.has_method("investigate_noise"):
 		_entity.investigate_noise(world_position, audible_range, kind)
@@ -810,14 +773,86 @@ func _on_muffle(active: bool) -> void:
 		AudioServer.remove_bus_effect(idx, low_pass_index)
 
 func _on_caught() -> void:
-	if _overlay and _overlay.has_method("trigger_jumpscare"):
-		_overlay.trigger_jumpscare()
 	if _is_mp:
 		# In co-op, being caught takes only you out — tell the others and
 		# spectate rather than restarting everyone's run.
 		_local_down()
+		# CX30 — downed was entered underneath the jumpscare's black screen.
+		# Only now is the world faded back in.
+		_finish_victim_jumpscare()
 		return
 	_end_run("caught")
+
+# ---------------------------------------------------------------------------
+# CX30 — victim-only jumpscare video
+# ---------------------------------------------------------------------------
+
+## Built only on the client the Entity caught, and never replicated. The id
+## carried by the signal must be this peer's, so a teammate can never end up
+## with the layer: they keep watching the full 3D execution in-world.
+func _on_victim_jumpscare(victim_id: int) -> void:
+	if _ended or is_instance_valid(_jumpscare_video):
+		return   # repeated catch events must not restart or stack the clip
+	var local_id := NetManager.local_player_id if has_node("/root/NetManager") else 0
+	if victim_id != local_id:
+		return
+	_jumpscare_video = load(JUMPSCARE_VIDEO_SCRIPT).new()
+	_jumpscare_video.name = "VictimJumpscare"
+	add_child(_jumpscare_video)
+	_jumpscare_hold_timer = JUMPSCARE_MAX_HOLD
+	# A missing or unreadable clip degrades to the same black screen with the
+	# same timing, so the run never stalls on it.
+	if bool(_jumpscare_video.start()) and _entity \
+			and _entity.has_method("notify_victim_jumpscare_started"):
+		_entity.notify_victim_jumpscare_started()
+
+func _tick_victim_jumpscare(delta: float) -> void:
+	if not is_instance_valid(_jumpscare_video):
+		return
+	_jumpscare_hold_timer -= delta
+	if _jumpscare_hold_timer > 0.0:
+		return
+	push_warning("game_world: victim jumpscare timed out — releasing the screen")
+	_release_victim_jumpscare(JUMPSCARE_DOWNED_FADE)
+
+func _release_victim_jumpscare(fade_seconds: float) -> void:
+	if is_instance_valid(_jumpscare_video):
+		if _jumpscare_video.has_method("release"):
+			_jumpscare_video.release(fade_seconds)
+		else:
+			_jumpscare_video.queue_free()
+	_jumpscare_video = null
+
+## Hand the screen back once the 3D sequence is over. The victim is already in
+## `downed` (or spectating) underneath the black, so the fade can never reveal
+## the Entity, a third-person frame, or a camera jump.
+func _finish_victim_jumpscare() -> void:
+	if not is_instance_valid(_jumpscare_video):
+		return
+	if not _is_downed:
+		# One-life co-op: the spectator camera owns the view from here.
+		_release_victim_jumpscare(JUMPSCARE_DOWNED_FADE)
+		return
+	if is_instance_valid(_player):
+		if _player.has_method("stabilize_downed_camera"):
+			_player.stabilize_downed_camera()
+		# Movement stays locked across the fade; crawling is unlocked at the end.
+		if _player.has_method("set_frozen"):
+			_player.set_frozen(true, false)
+	# Let the crawl pose and the planted camera settle before anything shows.
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	if not is_inside_tree():
+		return
+	_release_victim_jumpscare(JUMPSCARE_DOWNED_FADE)
+	await get_tree().create_timer(JUMPSCARE_DOWNED_FADE).timeout
+	if not is_inside_tree():
+		return
+	# Bleedout may have expired or a revive landed during the fade; only a still
+	# downed player gets its controls back here.
+	if _is_downed and is_instance_valid(_player) and _player.has_method("set_frozen"):
+		_player.set_frozen(false)
+		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 
 func _on_exit_reached() -> void:
 	# The physical door is inert until the final override sequence is complete.
@@ -843,8 +878,6 @@ func _on_snus_count(collected: int, total: int) -> void:
 		_entity.calm_down(0.18)
 	if _entity and _entity.has_method("hold_new_events"):
 		_entity.hold_new_events(Tuning.OBJECTIVE_EVENT_HOLD)
-	if _mimic and _mimic.has_method("set_progress_unlocked"):
-		_mimic.set_progress_unlocked(collected >= Tuning.MIMIC_UNLOCK_SNUS)
 
 	# A restrained physical reaction gives the pickup weight without repeating
 	# the same full-volume scream five times.
@@ -895,15 +928,14 @@ func _setup_multiplayer() -> void:
 
 func _spawn_remote_players() -> void:
 	var rp_script := load("res://scripts/world/remote_player.gd")
-	for pid in range(NetManager.max_players):
+	var total_players := NetManager.connected_players if has_node("/root/NetManager") and NetManager.connected_players > 0 else NetManager.max_players
+	for pid in range(total_players):
 		if pid == NetManager.local_player_id:
 			continue
 		var rp := CharacterBody3D.new()
 		rp.set_script(rp_script)
 		rp.player_id = pid
 		add_child(rp)
-		if rp.has_signal("footstep_emitted"):
-			rp.footstep_emitted.connect(_on_player_noise)
 		rp.global_position = _run_spawn_position(pid)
 		_remote_players[pid] = rp
 		if _snus and _snus.has_method("register_player_body"):
@@ -916,10 +948,15 @@ func _apply_initial_spawn() -> void:
 	var pid := NetManager.local_player_id if _is_mp and has_node("/root/NetManager") else 0
 	_player.global_position = _run_spawn_position(pid)
 
+
+func _separated_spawns_enabled() -> bool:
+	return _is_mp and not TEST_FORCE_GROUPED_SPAWNS \
+		and bool(NetManager.rule("separated_spawns", true))
+
 func _prepare_run_spawn_cells() -> void:
 	if not _run_spawn_cells.is_empty() or not is_instance_valid(_maze):
 		return
-	var separated := _is_mp and bool(NetManager.rule("separated_spawns", true))
+	var separated := _separated_spawns_enabled()
 	var count := NetManager.max_players if separated else 1
 	var rng := RandomNumberGenerator.new()
 	rng.seed = _run_seed ^ 0x53504157
@@ -961,6 +998,12 @@ func _prepare_run_spawn_cells() -> void:
 func _run_spawn_position(player_id: int) -> Vector3:
 	if _run_spawn_cells.is_empty():
 		return Vector3(float(player_id) * 1.4, 0.1, 0.0)
+	# Separated spawns: each player starts in a different maze cell, so they must
+	# use the scream (Q) to locate each other. Grouped fallback below if disabled.
+	var separated := _separated_spawns_enabled()
+	if separated:
+		var cell: Vector2i = _run_spawn_cells[posmod(player_id, _run_spawn_cells.size())]
+		return _maze.world_center(cell) + Vector3.UP * 0.1
 	var grouped_offsets: Array[Vector3] = [
 		Vector3.ZERO, Vector3(1.2, 0, 0), Vector3(-1.2, 0, 0), Vector3(0, 0, 1.2),
 	]
@@ -976,6 +1019,9 @@ func _start_position_broadcast() -> void:
 func _broadcast_position() -> void:
 	if _ended or not is_instance_valid(_player):
 		return
+	var animation_move := Vector2.ZERO
+	if _player.has_method("get_animation_move_direction"):
+		animation_move = _player.get_animation_move_direction()
 	NetManager.send("pos", {
 		"x": _player.global_position.x,
 		"y": _player.global_position.y,
@@ -984,6 +1030,8 @@ func _broadcast_position() -> void:
 		"pitch": _camera.rotation.x if is_instance_valid(_camera) else 0.0,
 		"spr": bool(_player.is_sprinting) if "is_sprinting" in _player else false,
 		"cr": bool(_player.is_crouching) if "is_crouching" in _player else false,
+		"mx": animation_move.x,
+		"mz": animation_move.y,
 	})
 
 var _is_downed := false
@@ -1013,6 +1061,22 @@ func _on_net_message(type: String, msg: Dictionary, from_player: int) -> void:
 			var rp = _remote_players.get(sender_id)
 			if rp and is_instance_valid(rp) and rp.has_method("update_target"):
 				rp.update_target(msg)
+		"execution":
+			var execution_player = _remote_players.get(sender_id)
+			if execution_player and is_instance_valid(execution_player) \
+					and execution_player.has_method("play_execution_clip"):
+				execution_player.play_execution_clip(
+					str(msg.get("clip", "")),
+					-1.0,
+					float(msg.get("speed", 1.0)))
+		"entity_execution":
+			if _entity and _entity.has_method("play_network_execution_clip"):
+				_entity.play_network_execution_clip(
+					str(msg.get("clip", "")),
+					float(msg.get("speed", 1.0)))
+		"entity_eat_align":
+			if _entity and _entity.has_method("apply_network_eat_alignment"):
+				_entity.apply_network_eat_alignment(msg)
 		"snus_request":
 			if NetManager.is_host and _snus and _snus.has_method("host_collect_id"):
 				var collector = _remote_players.get(sender_id)
@@ -1021,6 +1085,9 @@ func _on_net_message(type: String, msg: Dictionary, from_player: int) -> void:
 		"snus":
 			if _snus and _snus.has_method("remote_collect"):
 				_snus.remote_collect(int(msg.get("id", -1)))
+		"game_over":
+			if not _ended:
+				_end_run(str(msg.get("reason", "caught")))
 		"phone_request":
 			if NetManager.is_host:
 				var phone_collector = _remote_players.get(sender_id)
@@ -1042,6 +1109,11 @@ func _on_net_message(type: String, msg: Dictionary, from_player: int) -> void:
 				_receiving_shared_content = true
 				_content.remote_collect_cassette()
 				_receiving_shared_content = false
+		"vhs_tv":
+			var is_play := bool(msg.get("play", false))
+			var vhs_tv = find_child("VHSTV", true, false)
+			if is_instance_valid(vhs_tv) and vhs_tv.has_method("set_playing"):
+				vhs_tv.set_playing(is_play)
 		"aux_power":
 			if _content and _content.has_method("remote_restore_power"):
 				_receiving_shared_content = true
@@ -1063,6 +1135,8 @@ func _on_net_message(type: String, msg: Dictionary, from_player: int) -> void:
 			if rp_d and is_instance_valid(rp_d) and rp_d.has_method("set_downed"):
 				rp_d.set_downed(true)
 				_spawn_blood_decal(rp_d.global_position, "res://assets/textures/decals/blood_wall_end.png", Vector3(1.8, 2.0, 1.8))
+				if NetManager.is_host and _entity and _entity.has_method("schedule_revive_pressure"):
+					_entity.schedule_revive_pressure(rp_d.global_position)
 			if sender_id >= 0:
 				_remote_down[sender_id] = true
 				if _dead_spectator and sender_id == _spectate_target_id:
@@ -1086,6 +1160,22 @@ func _on_net_message(type: String, msg: Dictionary, from_player: int) -> void:
 			_play_callout(callout_position, sender_id, caller_is_downed)
 			if not caller_is_downed and _entity and _entity.has_method("investigate_noise"):
 				_entity.investigate_noise(callout_position, Tuning.COOP_CALLOUT_ENTITY_RANGE, "callout")
+		"player_noise":
+			if NetManager.is_host and sender_id >= 0 and not _remote_down.has(sender_id) \
+					and _entity and _entity.has_method("investigate_noise"):
+				var noise_kind := str(msg.get("kind", "walk"))
+				var allowed_ranges := {
+					"walk": Tuning.NOISE_RANGE_WALK,
+					"crouch": Tuning.NOISE_RANGE_CROUCH,
+					"sprint": Tuning.NOISE_RANGE_SPRINT,
+				}
+				if allowed_ranges.has(noise_kind):
+					var noise_position := Vector3(
+						float(msg.get("x", 0.0)),
+						float(msg.get("y", 0.0)),
+						float(msg.get("z", 0.0)))
+					_entity.investigate_noise(
+						noise_position, float(allowed_ranges[noise_kind]), noise_kind)
 		"vote_restart":
 			var voter := _resolve_sender_id(msg, from_player)
 			_restart_votes[voter] = true
@@ -1123,16 +1213,27 @@ func _on_net_message(type: String, msg: Dictionary, from_player: int) -> void:
 		"scare":
 			if int(msg.get("target", -1)) == NetManager.local_player_id \
 					and _entity and _entity.has_method("remote_scare"):
-				_entity.remote_scare(str(msg.get("kind", "peek")))
+				_entity.remote_scare(str(msg.get("kind", "peek")), msg)
 		"scare_all":
 			if _entity and _entity.has_method("remote_scare"):
-				_entity.remote_scare(str(msg.get("kind", "jump")))
+				_entity.remote_scare(str(msg.get("kind", "jump")), msg)
 		"fig":
-			if _entity and _entity.has_method("mirror_update"):
+			# Some relay configurations echo broadcasts to their sender. Never create
+			# a mirror of our own authoritative figure.
+			if int(msg.get("from", -1)) != NetManager.local_player_id \
+					and _entity and _entity.has_method("mirror_update"):
 				_entity.mirror_update(msg)
 		"figoff":
-			if _entity and _entity.has_method("mirror_off"):
+			if int(msg.get("from", -1)) != NetManager.local_player_id \
+					and _entity and _entity.has_method("mirror_off"):
 				_entity.mirror_off()
+		"stalk_gaze":
+			if NetManager.is_host and _entity and _entity.has_method("set_remote_stalk_gaze"):
+				_entity.set_remote_stalk_gaze(sender_id, bool(msg.get("seen", false)))
+		"stalk_caught":
+			if sender_id == 0 and int(msg.get("target", -1)) == NetManager.local_player_id \
+					and _entity and _entity.has_method("remote_stalk_caught"):
+				_entity.remote_stalk_caught()
 		"phone_chase":
 			var p_pos := Vector3(float(msg.get("x", 0)), 0, float(msg.get("z", 0)))
 			if _entity and _entity.has_method("phone_chase"):
@@ -1160,33 +1261,38 @@ func _on_player_disconnected(pid: int) -> void:
 func _local_down() -> void:
 	if _is_mp:
 		_local_is_down = true
-		if _entity and _entity.has_method("set_local_player_targetable"):
-			_entity.set_local_player_targetable(false)
 		if bool(NetManager.rule("one_life", false)):
+			# Permadeath: the entity goes dormant for this (now dead) client.
+			if _entity and _entity.has_method("set_local_player_targetable"):
+				_entity.set_local_player_targetable(false)
 			NetManager.send("down", {})
 			if is_instance_valid(_player) and _player.has_method("set_frozen"):
 				_player.set_frozen(true)
 			_enter_dead_spectator()
 			_check_all_down()
 			return
-		# Co-op: enter 30-second Downed Bleedout state where player can crawl and scream
+		# Co-op: enter 30-second Downed Bleedout state where player can crawl and scream.
+		# The entity ignores us (no catch) but keeps roaming — it flees, doesn't despawn.
+		if _entity and _entity.has_method("set_local_player_targetable"):
+			_entity.set_local_player_targetable(false, true)
 		_is_downed = true
 		_bleedout_timer = float(NetManager.rule("revive_seconds", 30.0))
-		_downed_scream_timer = 0.5
 		_crawl_blood_trail_timer = 0.0
 		NetManager.send("downed", {})
 		if is_instance_valid(_player):
-			_player.is_downed = true
+			if _player.has_method("set_downed_state"):
+				_player.set_downed_state(true)
+			else:
+				_player.is_downed = true
 			if _player.has_method("set_frozen"):
 				_player.set_frozen(false)
 		_spawn_blood_decal(_player.global_position, "res://assets/textures/decals/blood_wall_end.png", Vector3(1.8, 2.0, 1.8))
 		NetManager.send("blood_decal", {"type": "wall_end", "x": _player.global_position.x, "y": _player.global_position.y, "z": _player.global_position.z})
-		_downed_camera_yaw = _player.rotation.y
-		_downed_camera_pitch = 0.52
-		_spawn_local_downed_body()
 		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 		_setup_downed_hud()
 		_check_all_down()
+
+var _active_blood_decals: Array[Decal] = []
 
 func _spawn_blood_decal(pos: Vector3, texture_path: String, size: Vector3 = Vector3(1.6, 2.0, 1.6)) -> void:
 	if not ResourceLoader.exists(texture_path):
@@ -1201,33 +1307,16 @@ func _spawn_blood_decal(pos: Vector3, texture_path: String, size: Vector3 = Vect
 	decal.rotation.y = randf() * TAU
 	decal.cull_mask = 1
 	add_child(decal)
+	_active_blood_decals.append(decal)
+	if _active_blood_decals.size() > 12:
+		var oldest: Decal = _active_blood_decals.pop_front()
+		if is_instance_valid(oldest):
+			oldest.queue_free()
 
-func _play_downed_scream() -> void:
-	if not is_instance_valid(_player) or not has_node("/root/AudioManager"):
-		return
-	var scream_path := "res://assets/audio/sfx/enemy/enemy_jumpscare_scream.mp3"
-	if ResourceLoader.exists(scream_path):
-		var stream = load(scream_path) as AudioStream
-		if stream:
-			AudioManager.play_sfx_3d(self, stream, _player.global_position + Vector3(0, 0.4, 0), -2.0, 32.0, randf_range(0.9, 1.1))
-	else:
-		# Singleplayer: instant death
-		_local_is_down = true
-		if _overlay and _overlay.has_method("trigger_jumpscare"):
-			_overlay.trigger_jumpscare()
-		if has_node("/root/AudioManager"):
-			AudioManager.stop_all_sounds()
-		if is_instance_valid(_camera):
-			_camera.fov = 72.0
-		if is_instance_valid(_player) and _player.has_method("set_frozen"):
-			_player.set_frozen(true)
-		if _overlay and _overlay.has_method("fade_to"):
-			_overlay.fade_to(Color(0, 0, 0, 0.72), 1.2)
-		if _overlay and _overlay.has_method("show_ending"):
-			_overlay.show_ending(
-				"It found you.\n\nWait for the others…\nor for the dark.",
-				Color(0, 0, 0, 0.82),
-				Color(0.7, 0.66, 0.42))
+# CX34 — `_play_downed_scream()` removed. It was never called (the Q scream runs
+# through `_tick_callout`, and `callout` is mapped to Q), and its `else` branch —
+# reached only if the scream asset were missing — contained the singleplayer
+# death sequence. Renaming that mp3 would have made screaming end the run.
 
 func _setup_downed_hud() -> void:
 	if is_instance_valid(_downed_canvas):
@@ -1312,6 +1401,8 @@ func _enter_dead_spectator() -> void:
 		_overlay.clear_jumpscare()
 	_setup_spectator_hud()
 	_cycle_spectator(1)
+	# CX30 — one-life, or a bleedout that expired while the clip was still up.
+	_release_victim_jumpscare(JUMPSCARE_DOWNED_FADE)
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 
 func _setup_spectator_hud() -> void:
@@ -1468,6 +1559,7 @@ func _on_local_revived() -> void:
 	_bleedout_timer = 0.0
 	_incoming_revive_progress = 0.0
 	_incoming_revive_timeout = 0.0
+	_set_revive_progress(0.0, false)
 	_dead_spectator = false
 	_spectate_target_id = -1
 	if _maze and _maze.has_method("clear_stream_focus"):
@@ -1479,13 +1571,19 @@ func _on_local_revived() -> void:
 		_downed_canvas.queue_free()
 		_downed_canvas = null
 	_restore_local_player_camera()
-	if is_instance_valid(_player) and _player.has_method("set_frozen"):
-		_player.set_frozen(false)
+	if is_instance_valid(_player):
+		if _player.has_method("set_downed_state"):
+			_player.set_downed_state(false)
+		else:
+			_player.is_downed = false
+		if _player.has_method("set_frozen"):
+			_player.set_frozen(false)
 	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 	if _entity and _entity.has_method("set_local_player_targetable"):
 		_entity.set_local_player_targetable(true)
 	if _overlay and _overlay.has_method("clear_jumpscare"):
 		_overlay.clear_jumpscare()
+	_release_victim_jumpscare(0.0)   # CX30 safety net; normally already gone
 	if _overlay and _overlay.has_method("flash"):
 		_overlay.flash(Color(0.2, 0.9, 0.3, 0.5), 1.0)
 	if is_instance_valid(_player):
@@ -1574,6 +1672,8 @@ func _check_all_down() -> void:
 
 	# If 0 connected players are standing (everyone is downed or dead), end the run immediately!
 	if standing_count <= 0:
+		if _is_mp:
+			NetManager.send("game_over", {"reason": "caught"})
 		_end_run("caught")
 
 # ---------------------------------------------------------------------------
@@ -1585,6 +1685,10 @@ func _end_run(reason: String) -> void:
 	_ended = true
 	if is_instance_valid(_player) and _player.has_method("set_frozen"):
 		_player.set_frozen(true)
+	# CX30 — only the caught ending hands the black screen over deliberately.
+	# Any other ending simply drops it.
+	if reason != "caught":
+		_release_victim_jumpscare(0.0)
 	if has_node("/root/GameManager"):
 		GameManager.end_run(reason)
 	match reason:
@@ -1596,6 +1700,13 @@ func _end_run(reason: String) -> void:
 			_ending_secret()
 
 func _ending_caught() -> void:
+	# CX30 — singleplayer keeps its existing ending. Slide the overlay's own
+	# black underneath the jumpscare layer before removing it, so the hand-off
+	# to the ending text has no seam and the Entity is never revealed.
+	if is_instance_valid(_jumpscare_video):
+		if _overlay and _overlay.has_method("fade_to"):
+			_overlay.fade_to(Color(0, 0, 0, 1), 0.0)
+		_release_victim_jumpscare(0.0)
 	# Stop ambient loops immediately but let the jumpscare scream ring out
 	if _hum:
 		_hum.stop()
@@ -2055,7 +2166,7 @@ func _setup_interact_prompt() -> void:
 	_interact_prompt.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	
 	# Premium HUD typography & outline shadow
-	_interact_prompt.text = "[E] INTERACT"
+	_interact_prompt.text = "INTERACT"
 	_interact_prompt.add_theme_font_size_override("font_size", 18)
 	_interact_prompt.add_theme_color_override("font_color", Color(0.96, 0.94, 0.88))
 	_interact_prompt.add_theme_color_override("font_shadow_color", Color(0.0, 0.0, 0.0, 0.85))
@@ -2081,7 +2192,7 @@ func _update_interact_prompt(delta: float) -> void:
 	# 1. Check SNUS proximity (HIGHEST PRIORITY)
 	if not in_range and _snus and _snus.has_method("is_snus_in_range"):
 		if _snus.is_snus_in_range(_player.global_position):
-			target_text = "[E] GRAB SNUS"
+			target_text = "GRAB SNUS"
 			in_range = true
 
 	# 2. Check Extraction terminal
@@ -2097,6 +2208,16 @@ func _update_interact_prompt(delta: float) -> void:
 		if content_prompt != "":
 			target_text = content_prompt
 			in_range = true
+
+	# 4. VHS TV Deck (Archive Shrine Anchor Room)
+	if not in_range:
+		var vhs_tv = find_child("VHSTV", true, false)
+		if is_instance_valid(vhs_tv) and vhs_tv.has_method("can_interact"):
+			if vhs_tv.can_interact(_player.global_position):
+				target_text = vhs_tv.get_interact_prompt()
+				in_range = true
+				if Input.is_action_just_pressed("interact"):
+					vhs_tv.interact()
 			
 	# 2. Check Telephone proximity (if SNUS isn't already taking priority)
 	if not in_range:
@@ -2113,14 +2234,25 @@ func _update_interact_prompt(delta: float) -> void:
 							if _snus and _snus.get_collected() < 1:
 								target_text = "DEAD LINE — FIND A SIGNAL"
 							else:
-								target_text = "[E] ANSWER TELEPHONE"
+								target_text = "ANSWER TELEPHONE"
 							in_range = true
 						
+	# CX31 — the one real door. It now stands in the world from the first second,
+	# so walking into it early has to say why it will not open instead of doing
+	# nothing (which read as "this door is broken").
+	if not in_range and _maze and _maze.has_method("is_exit_locked") \
+			and _maze.is_exit_locked():
+		var door_position: Vector3 = _maze.exit_door_position()
+		if door_position != Vector3.ZERO \
+				and _player.global_position.distance_to(door_position) < EXIT_PROMPT_RANGE:
+			target_text = _exit_locked_text()
+			in_range = true
+
 	# 3. Check sealed locker proximity
 	if not in_range and _lockers and _lockers.has_method("get_nearest_locker_in_range"):
 		var locker = _lockers.get_nearest_locker_in_range(_player.global_position)
 		if is_instance_valid(locker):
-			target_text = "[E] INSPECT LOCKER"
+			target_text = "INSPECT LOCKER"
 			in_range = true
 			
 	# Respond instantly and smoothly fade
@@ -2129,6 +2261,20 @@ func _update_interact_prompt(delta: float) -> void:
 		_interact_prompt.modulate.a = lerpf(_interact_prompt.modulate.a, 1.0, 16.0 * delta)
 	else:
 		_interact_prompt.modulate.a = lerpf(_interact_prompt.modulate.a, 0.0, 16.0 * delta)
+
+## CX31 — what the sealed exit tells you, naming the objective that is actually
+## blocking it rather than a generic refusal.
+func _exit_locked_text() -> String:
+	if not _snus_done:
+		var collected := 0
+		if _snus and _snus.has_method("get_collected"):
+			collected = int(_snus.get_collected())
+		return "STILL LOCKED — FIND THE SNUS (%d/5)" % collected
+	if _extraction and _extraction.has_method("get_armed_count") \
+			and _extraction.has_method("get_total_buttons"):
+		return "STILL LOCKED — EMERGENCY BUTTONS (%d/%d)" % [
+			int(_extraction.get_armed_count()), int(_extraction.get_total_buttons())]
+	return "STILL LOCKED — ACTIVATE THE EMERGENCY BUTTONS"
 
 func _on_cassette_collected() -> void:
 	if _snus_ui and _snus_ui.has_method("announce"):
@@ -2166,6 +2312,8 @@ func _on_extraction_ready() -> void:
 		_maze.enable_exit()
 	if _entity and _entity.has_method("enter_final_phase"):
 		_entity.enter_final_phase()
+	if _entity and _entity.has_method("grant_stalk_grace"):
+		_entity.grant_stalk_grace(Tuning.STALK_EXIT_GRACE)
 	if has_node("/root/AudioManager") and ResourceLoader.exists(FINAL_MUSIC):
 		AudioManager.play_music(load(FINAL_MUSIC), -10.0, 1.5)
 		AudioManager.set_music_volume(-3.0, 12.0)

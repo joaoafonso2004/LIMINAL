@@ -3,11 +3,15 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://cioi5f2tqgcn3"
-valid=false
+path="res://.godot/imported/liminal_banner.png-61709ad318c6f4bbfaa056f74a93ff87.ctex"
+metadata={
+"vram_texture": false
+}
 
 [deps]
 
 source_file="res://assets/ui/liminal_banner.png"
+dest_files=["res://.godot/imported/liminal_banner.png-61709ad318c6f4bbfaa056f74a93ff87.ctex"]
 
 [params]
 
