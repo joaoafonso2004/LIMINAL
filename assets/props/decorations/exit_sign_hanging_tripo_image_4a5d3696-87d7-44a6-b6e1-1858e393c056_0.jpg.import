@@ -9,7 +9,7 @@ metadata={
 "vram_texture": true
 }
 generator_parameters={
-"md5": "7cf21e5bf314e1c2f519340a291e8835"
+"md5": "b132255f29d299a38bca6d528f2e34d0"
 }
 
 [deps]
@@ -22,8 +22,6 @@ dest_files=["res://.godot/imported/exit_sign_hanging_tripo_image_4a5d3696-87d7-4
 compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.75
-compress/uastc_level=0
-compress/rdo_quality_loss=0.0
 compress/hdr_compression=1
 compress/normal_map=0
 compress/channel_pack=0
@@ -31,10 +29,6 @@ mipmaps/generate=true
 mipmaps/limit=-1
 roughness/mode=0
 roughness/src_normal=""
-process/channel_remap/red=0
-process/channel_remap/green=1
-process/channel_remap/blue=2
-process/channel_remap/alpha=3
 process/fix_alpha_border=true
 process/premult_alpha=false
 process/normal_map_invert_y=false

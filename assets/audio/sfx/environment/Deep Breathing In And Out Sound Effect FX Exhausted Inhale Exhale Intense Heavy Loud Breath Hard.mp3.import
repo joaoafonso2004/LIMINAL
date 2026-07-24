@@ -1,0 +1,19 @@
+[remap]
+
+importer="mp3"
+type="AudioStreamMP3"
+uid="uid://cexmucuxi3y0e"
+path="res://.godot/imported/Deep Breathing In And Out Sound Effect FX Exhausted Inhale Exhale Intense Heavy Loud Breath Hard.mp3-7cffdd2294a8d049d8d93567d1473290.mp3str"
+
+[deps]
+
+source_file="res://assets/audio/sfx/environment/Deep Breathing In And Out Sound Effect FX Exhausted Inhale Exhale Intense Heavy Loud Breath Hard.mp3"
+dest_files=["res://.godot/imported/Deep Breathing In And Out Sound Effect FX Exhausted Inhale Exhale Intense Heavy Loud Breath Hard.mp3-7cffdd2294a8d049d8d93567d1473290.mp3str"]
+
+[params]
+
+loop=false
+loop_offset=0
+bpm=0
+beat_count=0
+bar_beats=4

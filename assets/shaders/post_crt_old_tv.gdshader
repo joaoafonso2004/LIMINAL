@@ -7,9 +7,11 @@
 // Pipeline: Compatibility (WebGL 2). Budget: 3 screen samples/px, no loops.
 shader_type canvas_item;
 
-uniform sampler2D screen_tex : hint_screen_texture, filter_linear;
+uniform sampler2D screen_tex : hint_screen_texture, repeat_disable, filter_linear_mipmap;
 uniform float dread : hint_range(0.0, 1.0) = 0.0;
 uniform float pulse : hint_range(0.0, 1.0) = 0.0;
+uniform float twitch : hint_range(-0.01, 0.01) = 0.0;
+uniform float focus_blur : hint_range(0.0, 1.0) = 0.0;
 
 // Look constants (documented in docs/design/game-design.md).
 // Grade target: sickly fluorescent Level 0 yellow with deep neutral shadows.
@@ -36,6 +38,7 @@ vec2 curve(vec2 uv) {
 
 void fragment() {
 	vec2 uv = curve(SCREEN_UV);
+	uv.x += twitch;
 
 	// --- VHS tracking tear: a thin band that yanks rows sideways sometimes ---
 	float band_seed = floor(TIME * 2.0);
@@ -47,9 +50,12 @@ void fragment() {
 
 	// --- Chromatic aberration: worse as the signal sickens ---
 	float ab = ABERRATION_BASE + dread * 0.0026 + pulse * 0.004;
-	float r = texture(screen_tex, uv + vec2(ab, 0.0)).r;
-	float g = texture(screen_tex, uv).g;
-	float b = texture(screen_tex, uv - vec2(ab, 0.0)).b;
+	// Mipmap LOD produces smooth optical defocus without blocky pixels or an
+	// expensive multi-tap blur. At zero this is the original three-sample CRT.
+	float focus_lod = focus_blur * 2.35;
+	float r = textureLod(screen_tex, uv + vec2(ab, 0.0), focus_lod).r;
+	float g = textureLod(screen_tex, uv, focus_lod).g;
+	float b = textureLod(screen_tex, uv - vec2(ab, 0.0), focus_lod).b;
 	vec3 col = vec3(r, g, b);
 
 	// --- Drained fluorescent colour; shadows remain crushed black ---

@@ -12,6 +12,7 @@ signal exit_spawned(world_pos: Vector3)
 signal exit_reached()
 
 const CELL: float = 4.0
+const WET_FLOOR_RADIUS: float = 1.55
 const VIEW_RADIUS: int = 12         # cells kept around the player (48 m — no void at corridor ends)
 const FREE_RADIUS: int = 14         # cells beyond this are released (bumps salt)
 # Compatibility renderer has a hard 64-light budget. Reserve twelve for SNUS,
@@ -248,9 +249,14 @@ func _build_materials() -> void:
 	_office_metal_mat.albedo_color = Color(0.23, 0.24, 0.20)
 	_office_metal_mat.roughness = 0.82
 	_puddle_mat = StandardMaterial3D.new()
-	_puddle_mat.albedo_color = Color(0.08, 0.10, 0.065, 0.42)
-	_puddle_mat.roughness = 0.22
+	# A thin reflective film over the existing carpet, not an opaque black floor.
+	# The old 42% near-black layer swallowed all local lighting under the CRT.
+	_puddle_mat.albedo_color = Color(0.30, 0.33, 0.20, 0.14)
+	_puddle_mat.roughness = 0.16
+	_puddle_mat.metallic = 0.08
+	_puddle_mat.metallic_specular = 0.82
 	_puddle_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	_puddle_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
 
 func _mk_mat(path: String, uv: Vector3, rough: float, tint: Color) -> StandardMaterial3D:
 	var m := StandardMaterial3D.new()
@@ -547,9 +553,9 @@ func _apply_power_override(cell: Vector2i, data: Dictionary) -> void:
 func _place_anchor_room_landmark(root: Node3D, body: StaticBody3D, kind: String) -> void:
 	if kind == "red_room":
 		var red_light := OmniLight3D.new()
-		red_light.color = Color(1.0, 0.14, 0.04)
+		red_light.light_color = Color(1.0, 0.14, 0.04)
 		red_light.omni_range = 14.0
-		red_light.energy = 3.2
+		red_light.light_energy = 3.2
 		red_light.position = Vector3(CELL * 0.5, 2.6, CELL * 0.5)
 		red_light.shadow_enabled = true
 		root.add_child(red_light)
@@ -580,9 +586,9 @@ func _place_anchor_room_landmark(root: Node3D, body: StaticBody3D, kind: String)
 		root.add_child(cyan_panel)
 
 		var cyan_light := OmniLight3D.new()
-		cyan_light.color = Color(0.18, 0.8, 1.0)
+		cyan_light.light_color = Color(0.18, 0.8, 1.0)
 		cyan_light.omni_range = 12.0
-		cyan_light.energy = 2.5
+		cyan_light.light_energy = 2.5
 		cyan_light.position = Vector3(CELL * 0.5, 2.5, CELL * 0.5)
 		root.add_child(cyan_light)
 
@@ -593,9 +599,9 @@ func _place_anchor_room_landmark(root: Node3D, body: StaticBody3D, kind: String)
 
 	elif kind == "archive_shrine":
 		var amber_light := OmniLight3D.new()
-		amber_light.color = Color(0.98, 0.62, 0.2)
+		amber_light.light_color = Color(0.98, 0.62, 0.2)
 		amber_light.omni_range = 12.0
-		amber_light.energy = 2.8
+		amber_light.light_energy = 2.8
 		amber_light.position = Vector3(CELL * 0.5, 2.6, CELL * 0.5)
 		amber_light.shadow_enabled = true
 		root.add_child(amber_light)
@@ -624,6 +630,9 @@ func _add_box(root: Node3D, body: StaticBody3D, size: Vector3, pos: Vector3, mat
 	mi.mesh = bm
 	mi.material_override = mat
 	mi.position = pos
+	if mat == _puddle_mat:
+		# Transparent water films must not cast an opaque rectangular box shadow.
+		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	root.add_child(mi)
 	if collide:
 		var cs := CollisionShape3D.new()
@@ -881,18 +890,20 @@ func _spawn_chair_vignette(root: Node3D, c: Vector2i) -> void:
 
 func _spawn_maintenance_trace(root: Node3D, c: Vector2i) -> void:
 	var angle := _decor_hash(c, 1330) * TAU
-	var position := _safe_corner_position(c, 1332, 1.18)
+	# Keep the whole hazard inside its 4 m procedural cell. The previous 3.5 m
+	# radius was wider than the cell and intersected neighbouring floor meshes.
+	var position := _safe_corner_position(c, 1332, 1.18) * 0.34
 	var puddle := MeshInstance3D.new()
 	puddle.name = "OldCeilingLeak"
 	var puddle_mesh := CylinderMesh.new()
-	puddle_mesh.top_radius = 1.75
-	puddle_mesh.bottom_radius = 1.55
-	puddle_mesh.height = 0.012
+	puddle_mesh.top_radius = WET_FLOOR_RADIUS
+	puddle_mesh.bottom_radius = WET_FLOOR_RADIUS * 0.92
+	puddle_mesh.height = 0.006
 	puddle.mesh = puddle_mesh
 	puddle.material_override = _puddle_mat
-	puddle.position = position + Vector3(0.12, 0.008, -0.08)
-	puddle.scale = Vector3(1.3, 1.0, 1.3)
+	puddle.position = position + Vector3(0.08, 0.006, -0.05)
 	puddle.rotation.y = angle
+	puddle.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	root.add_child(puddle)
 
 	# Area3D trigger for player & entity slipping physics
@@ -900,10 +911,14 @@ func _spawn_maintenance_trace(root: Node3D, c: Vector2i) -> void:
 	slip_area.name = "WetFloorHazardArea"
 	slip_area.add_to_group("wet_floor")
 	slip_area.set_meta("is_wet_floor", true)
+	slip_area.set_meta("wet_floor_radius", WET_FLOOR_RADIUS)
 	slip_area.position = puddle.position
+	slip_area.collision_layer = 0
+	slip_area.collision_mask = 2
+	slip_area.monitoring = true
 	var slip_col := CollisionShape3D.new()
 	var slip_shape := CylinderShape3D.new()
-	slip_shape.radius = 2.0
+	slip_shape.radius = WET_FLOOR_RADIUS
 	slip_shape.height = 1.2
 	slip_col.shape = slip_shape
 	slip_area.add_child(slip_col)
@@ -915,7 +930,9 @@ func _spawn_maintenance_trace(root: Node3D, c: Vector2i) -> void:
 		root.add_child(sign)
 		ModelUtils.scale_to_height(sign, 0.68)
 		ModelUtils.ground_model(sign, 0.0)
-		var sign_position := position + Vector3(-0.18 * signf(position.x), 0.0, -0.12 * signf(position.z))
+		var sign_position := puddle.position + Vector3(
+			-0.62 * signf(position.x), -puddle.position.y,
+			-0.40 * signf(position.z))
 		sign.position += sign_position
 		sign.rotation.y = angle + _decor_hash(c, 1331) * 1.1
 		var sign_body := StaticBody3D.new()

@@ -8,7 +8,7 @@ metadata={
 "vram_texture": false
 }
 generator_parameters={
-"md5": "d9d4931518ce1e126f02382129830f9f"
+"md5": "149d97f1a49987aad361f93281ce153a"
 }
 
 [deps]
@@ -21,8 +21,6 @@ dest_files=["res://.godot/imported/player_28.png-40e07fff27a91729f313e819e52f4e7
 compress/mode=1
 compress/high_quality=false
 compress/lossy_quality=0.75
-compress/uastc_level=0
-compress/rdo_quality_loss=0.0
 compress/hdr_compression=1
 compress/normal_map=0
 compress/channel_pack=0
@@ -30,10 +28,6 @@ mipmaps/generate=true
 mipmaps/limit=-1
 roughness/mode=0
 roughness/src_normal=""
-process/channel_remap/red=0
-process/channel_remap/green=1
-process/channel_remap/blue=2
-process/channel_remap/alpha=3
 process/fix_alpha_border=true
 process/premult_alpha=false
 process/normal_map_invert_y=false

@@ -1,0 +1,19 @@
+[remap]
+
+importer="mp3"
+type="AudioStreamMP3"
+uid="uid://cfdgit6ud65ik"
+path="res://.godot/imported/Async Researcher  Async Supervisor breathing sound.mp3-8a8bedb4d388172136882b083f7f1d5f.mp3str"
+
+[deps]
+
+source_file="res://assets/audio/sfx/player/Async Researcher  Async Supervisor breathing sound.mp3"
+dest_files=["res://.godot/imported/Async Researcher  Async Supervisor breathing sound.mp3-8a8bedb4d388172136882b083f7f1d5f.mp3str"]
+
+[params]
+
+loop=false
+loop_offset=0
+bpm=0
+beat_count=0
+bar_beats=4

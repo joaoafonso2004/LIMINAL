@@ -13,6 +13,8 @@ const MUTED := Color(0.52, 0.52, 0.46, 1.0)
 const SIGNAL := Color(0.78, 0.70, 0.48, 1.0)
 
 var _font: Font = null
+var _binding_buttons: Dictionary = {}
+var _awaiting_action := ""
 
 
 func _ready() -> void:
@@ -41,10 +43,18 @@ func _build() -> void:
 	_style(title, 44, PAPER, 800)
 	add_child(title)
 
+	var scroll := ScrollContainer.new()
+	add_child(scroll)
+	scroll.anchor_bottom = 1.0
+	scroll.offset_left = 70.0
+	scroll.offset_right = 470.0
+	scroll.offset_top = 170.0
+	scroll.offset_bottom = -42.0
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+
 	var vb := VBoxContainer.new()
-	add_child(vb)
-	vb.position = Vector2(70, 180)
-	vb.size = Vector2(380, 700)
+	scroll.add_child(vb)
+	vb.custom_minimum_size = Vector2(380, 0)
 	vb.alignment = BoxContainer.ALIGNMENT_BEGIN
 	vb.add_theme_constant_override("separation", 12)
 
@@ -75,16 +85,34 @@ func _build() -> void:
 		Settings.save_settings())
 	vb.add_child(mode_btn)
 
-	var crt := CheckButton.new()
-	crt.text = "CRT FILTER"
-	crt.button_pressed = Settings.crt_filter
-	crt.custom_minimum_size = Vector2(380, 48)
-	crt.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
-	UIKit.style_brutalist_button(crt, 17)
-	crt.toggled.connect(func(on: bool):
-		Settings.crt_filter = on
+	var voice := OptionButton.new()
+	voice.add_item("VOICE: PUSH-TO-TALK")
+	voice.add_item("VOICE: ALWAYS SPEAKING")
+	voice.add_item("VOICE: OFF")
+	voice.select(Settings.voice_mode)
+	voice.custom_minimum_size = Vector2(380, 48)
+	UIKit.style_brutalist_button(voice, 17)
+	voice.item_selected.connect(func(index: int):
+		Settings.voice_mode = clampi(index, 0, 2)
 		Settings.save_settings())
-	vb.add_child(crt)
+	vb.add_child(voice)
+
+	var bindings_title := Label.new()
+	bindings_title.text = "KEY / MOUSE BINDINGS"
+	_style(bindings_title, 13, MUTED, 500)
+	vb.add_child(bindings_title)
+	for spec in [
+		["move_forward", "MOVE FORWARD"],
+		["move_back", "MOVE BACK"],
+		["move_left", "MOVE LEFT"],
+		["move_right", "MOVE RIGHT"],
+		["sprint", "SPRINT"],
+		["crouch", "CROUCH"],
+		["interact", "INTERACT"],
+		["callout", "SCREAM"],
+		["voice_ptt", "VOICE PTT"],
+	]:
+		_add_binding_row(vb, String(spec[0]), String(spec[1]))
 
 	var action_gap := Control.new()
 	action_gap.custom_minimum_size.y = 18.0
@@ -100,6 +128,64 @@ func _build() -> void:
 		Settings.save_settings()
 		closed.emit())
 	vb.add_child(back)
+
+
+func _add_binding_row(
+		parent: VBoxContainer, action: String, display_name: String) -> void:
+	var row := HBoxContainer.new()
+	row.custom_minimum_size = Vector2(380, 38)
+	row.add_theme_constant_override("separation", 8)
+	parent.add_child(row)
+	var label := Label.new()
+	label.text = display_name
+	label.custom_minimum_size = Vector2(215, 38)
+	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_style(label, 13, PAPER, 500)
+	row.add_child(label)
+	var button := Button.new()
+	button.text = Settings.binding_text(action)
+	button.custom_minimum_size = Vector2(145, 38)
+	button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	UIKit.style_brutalist_button(button, 14)
+	button.pressed.connect(func():
+		_awaiting_action = action
+		button.text = "KEY OR MOUSE...")
+	row.add_child(button)
+	_binding_buttons[action] = button
+
+
+func _input(event: InputEvent) -> void:
+	if _awaiting_action.is_empty() or not visible:
+		return
+	if event is InputEventKey:
+		var key_event := event as InputEventKey
+		if not key_event.pressed or key_event.echo:
+			return
+		if key_event.physical_keycode == KEY_ESCAPE \
+				or key_event.keycode == KEY_ESCAPE:
+			_refresh_binding_buttons()
+			_awaiting_action = ""
+			get_viewport().set_input_as_handled()
+			return
+	elif event is InputEventMouseButton:
+		if not (event as InputEventMouseButton).pressed:
+			return
+	else:
+		return
+	var binding_code := Settings.binding_code_from_event(event)
+	if binding_code == 0:
+		return
+	Settings.rebind_action(_awaiting_action, binding_code)
+	_awaiting_action = ""
+	_refresh_binding_buttons()
+	get_viewport().set_input_as_handled()
+
+
+func _refresh_binding_buttons() -> void:
+	for action in _binding_buttons:
+		var button = _binding_buttons[action]
+		if is_instance_valid(button):
+			button.text = Settings.binding_text(String(action))
 
 
 func _add_slider(parent: VBoxContainer, label_text: String, minv: float, maxv: float, step: float, getter: Callable, setter: Callable) -> void:

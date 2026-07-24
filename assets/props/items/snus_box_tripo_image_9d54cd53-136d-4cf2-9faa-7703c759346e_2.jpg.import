@@ -9,7 +9,7 @@ metadata={
 "vram_texture": true
 }
 generator_parameters={
-"md5": "fabc9ff19838b0eebdd30fa26917fd22"
+"md5": "6114c1809ef0a5182aa6b97b0606431e"
 }
 
 [deps]
@@ -22,8 +22,6 @@ dest_files=["res://.godot/imported/snus_box_tripo_image_9d54cd53-136d-4cf2-9faa-
 compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.75
-compress/uastc_level=0
-compress/rdo_quality_loss=0.0
 compress/hdr_compression=1
 compress/normal_map=1
 compress/channel_pack=0
@@ -31,10 +29,6 @@ mipmaps/generate=true
 mipmaps/limit=-1
 roughness/mode=1
 roughness/src_normal="res://assets/props/items/snus_box_tripo_image_9d54cd53-136d-4cf2-9faa-7703c759346e_2.jpg"
-process/channel_remap/red=0
-process/channel_remap/green=1
-process/channel_remap/blue=2
-process/channel_remap/alpha=3
 process/fix_alpha_border=true
 process/premult_alpha=false
 process/normal_map_invert_y=false

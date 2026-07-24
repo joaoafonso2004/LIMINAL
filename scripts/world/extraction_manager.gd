@@ -8,11 +8,12 @@ signal window_reset
 
 const CELL := 4.0
 const INTERACT_RANGE := 2.5
-const HOLD_SECONDS := 6.0
+const HOLD_SECONDS := 4.0
 const COOP_WINDOW_SECONDS := 45.0
 const EMERGENCY_BUTTON_SCENE := preload("res://assets/props/items/emergency_button.glb")
 const EMERGENCY_BUTTON_HEIGHT := 0.48
 const LEVER_ANIMATION := &"Po_Bo|Level_Down"
+const ACTIVATION_SFX := "res://assets/audio/sfx/pickup/pickup_escape_unlocked.mp3"
 
 var _player: Node3D
 var _maze: Node3D
@@ -29,6 +30,7 @@ var _window_left := 0.0
 var _progress_canvas: CanvasLayer
 var _progress_bar: ProgressBar
 var _progress_label: Label
+var _visual_time := 0.0
 
 func setup(player: Node3D, maze: Node3D, multiplayer: bool, host: bool, run_seed: int = 1) -> void:
 	_player = player
@@ -51,11 +53,50 @@ func is_active() -> bool:
 func is_ready() -> bool:
 	return _ready
 
+func _process(delta: float) -> void:
+	_visual_time += delta
+	for station in _stations:
+		if not is_instance_valid(station) \
+				or bool(station.get_meta("indicator_armed", false)):
+			continue
+		var material := station.get_meta(
+			"status_material", null) as StandardMaterial3D
+		var light := station.get_meta("status_light", null) as OmniLight3D
+		var pulse := 0.5 + 0.5 * sin(_visual_time * 3.4)
+		if material:
+			material.emission_energy_multiplier = lerpf(1.1, 2.3, pulse)
+		if light:
+			light.light_energy = lerpf(0.09, 0.22, pulse)
+
 func get_armed_count() -> int:
 	return _armed.size()
 
 func get_total_buttons() -> int:
 	return 2 if _is_mp else 1
+
+func get_window_left() -> float:
+	return _window_left
+
+func get_station_position(station_id: int) -> Vector3:
+	if station_id < 0 or station_id >= _stations.size():
+		return Vector3.ZERO
+	var station := _stations[station_id]
+	return station.global_position if is_instance_valid(station) else Vector3.ZERO
+
+func get_nearest_unarmed_position(from: Vector3) -> Vector3:
+	var nearest := Vector3.ZERO
+	var best_distance := INF
+	for station_id in _stations.size():
+		if _armed.get(station_id, false):
+			continue
+		var station := _stations[station_id]
+		if not is_instance_valid(station):
+			continue
+		var distance := from.distance_squared_to(station.global_position)
+		if distance < best_distance:
+			best_distance = distance
+			nearest = station.global_position
+	return nearest
 
 func prompt(from: Vector3) -> String:
 	if not _active or _ready:
@@ -114,6 +155,7 @@ func _arm(station_id: int, relay: bool) -> void:
 	_hold_station = -1
 	_update_progress_hud(-1, false)
 	_set_station_visual(station_id, true)
+	_play_activation_feedback(station_id)
 	if _is_mp and _window_left <= 0.0:
 		_window_left = COOP_WINDOW_SECONDS
 	if relay:
@@ -272,6 +314,7 @@ func _spawn_station(station_id: int, cell: Vector2i) -> void:
 		_add_station_collision(root, model)
 		_set_lever_rest_pose(model)
 	_add_status_indicator(root)
+	_add_station_label(root, station_id)
 	_stations.append(root)
 
 func _model_bounds_in_root(root: Node3D, model: Node3D) -> AABB:
@@ -342,14 +385,39 @@ func _add_status_indicator(root: Node3D) -> void:
 	root.add_child(light)
 	root.set_meta("status_material", material)
 	root.set_meta("status_light", light)
+	root.set_meta("indicator_armed", false)
+
+func _add_station_label(root: Node3D, station_id: int) -> void:
+	var label := Label3D.new()
+	label.name = "EmergencyOverrideLabel"
+	label.text = "EMERGENCY OVERRIDE  %02d" % (station_id + 1)
+	label.font_size = 30
+	label.pixel_size = 0.0022
+	label.position = Vector3(0.0, 0.34, 0.19)
+	label.modulate = Color(0.9, 0.86, 0.68, 0.9)
+	label.outline_size = 8
+	label.outline_modulate = Color(0.03, 0.025, 0.015, 0.92)
+	label.no_depth_test = false
+	root.add_child(label)
+
+func _play_activation_feedback(station_id: int) -> void:
+	var station_position := get_station_position(station_id)
+	if station_position == Vector3.ZERO or not has_node("/root/AudioManager") \
+			or not ResourceLoader.exists(ACTIVATION_SFX):
+		return
+	AudioManager.play_sfx_3d(
+		self, load(ACTIVATION_SFX), station_position,
+		-1.5, 28.0, 0.82)
 
 func _set_indicator_armed(station: Node3D, armed: bool) -> void:
+	station.set_meta("indicator_armed", armed)
 	var material := station.get_meta("status_material", null) as StandardMaterial3D
 	var light := station.get_meta("status_light", null) as OmniLight3D
 	var color := Color(0.04, 1.0, 0.16) if armed else Color(1.0, 0.04, 0.015)
 	if material:
 		material.albedo_color = color.darkened(0.2)
 		material.emission = color
+		material.emission_energy_multiplier = 1.9 if armed else 1.6
 	if light:
 		light.light_color = color
 		light.light_energy = 0.28 if armed else 0.14
@@ -423,17 +491,35 @@ func _setup_progress_hud() -> void:
 	panel.add_child(_progress_bar)
 	panel.visible = false
 	_progress_canvas.set_meta("panel", panel)
+	_progress_canvas.set_meta("fill_style", fill)
 
 func _update_progress_hud(station_id: int, visible: bool) -> void:
-	if visible:
+	var show_countdown := _is_mp and _window_left > 0.0 and not _ready
+	if visible or show_countdown:
 		_setup_progress_hud()
 	if not is_instance_valid(_progress_canvas):
 		return
 	var panel := _progress_canvas.get_meta("panel", null) as Control
 	if not panel:
 		return
-	panel.visible = visible
-	if not visible:
+	panel.visible = visible or show_countdown
+	if not panel.visible:
 		return
-	_progress_bar.value = _hold_progress
-	_progress_label.text = "EMERGENCY BUTTON %d" % (station_id + 1)
+	var fill := _progress_canvas.get_meta(
+		"fill_style", null) as StyleBoxFlat
+	if visible and station_id >= 0 and not _armed.get(station_id, false):
+		_progress_bar.max_value = HOLD_SECONDS
+		_progress_bar.value = _hold_progress
+		_progress_label.text = "HOLDING EMERGENCY BUTTON %d" % (station_id + 1)
+		if fill:
+			fill.bg_color = Color(0.88, 0.13, 0.045, 1.0)
+	else:
+		_progress_bar.max_value = COOP_WINDOW_SECONDS
+		_progress_bar.value = _window_left
+		_progress_label.text = "SECOND EMERGENCY BUTTON — %02ds" % ceili(
+			_window_left)
+		if fill:
+			var urgency := 1.0 - clampf(
+				_window_left / COOP_WINDOW_SECONDS, 0.0, 1.0)
+			fill.bg_color = Color(0.95, 0.62, 0.04).lerp(
+				Color(1.0, 0.04, 0.015), urgency)

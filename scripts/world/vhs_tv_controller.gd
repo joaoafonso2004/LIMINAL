@@ -117,9 +117,9 @@ func _build_tv_setup() -> void:
 
 	# 8. CRT Lighting (casts screen glow into the anchor room)
 	_tv_light = OmniLight3D.new()
-	_tv_light.color = Color(0.3, 0.6, 1.0)
+	_tv_light.light_color = Color(0.3, 0.6, 1.0)
 	_tv_light.omni_range = 9.0
-	_tv_light.energy = 0.0
+	_tv_light.light_energy = 0.0
 	_tv_light.position = Vector3(0.0, 1.05, 0.5)
 	_tv_light.shadow_enabled = true
 	add_child(_tv_light)
@@ -128,7 +128,7 @@ func _process(delta: float) -> void:
 	if _is_playing and is_instance_valid(_tv_light):
 		var t := Time.get_ticks_msec() / 1000.0
 		var flicker := (sin(t * 8.0) * 0.3 + sin(t * 19.0) * 0.2 + 0.5) * 0.8 + 0.6
-		_tv_light.energy = 2.4 * flicker
+		_tv_light.light_energy = 2.4 * flicker
 
 func can_interact(player_pos: Vector3) -> bool:
 	return global_position.distance_to(player_pos) <= 3.2
@@ -166,7 +166,7 @@ func set_playing(play: bool) -> void:
 		_screen_material.emission_texture = tex
 		_screen_material.emission_energy_multiplier = 2.8
 		if is_instance_valid(_tv_light):
-			_tv_light.energy = 2.4
+			_tv_light.light_energy = 2.4
 		if has_node("/root/AudioManager") and ResourceLoader.exists(SFX_INSERT_PATH):
 			AudioManager.play_sfx_3d(self, load(SFX_INSERT_PATH), global_position, -2.0, 15.0)
 	else:
@@ -176,4 +176,4 @@ func set_playing(play: bool) -> void:
 		_screen_material.emission_enabled = false
 		_screen_material.albedo_color = Color(0.02, 0.03, 0.04)
 		if is_instance_valid(_tv_light):
-			_tv_light.energy = 0.0
+			_tv_light.light_energy = 0.0

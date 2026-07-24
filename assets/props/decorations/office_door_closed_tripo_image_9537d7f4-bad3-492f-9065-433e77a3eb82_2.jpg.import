@@ -9,7 +9,7 @@ metadata={
 "vram_texture": true
 }
 generator_parameters={
-"md5": "83bcea31880cd9d033006b4636c37f71"
+"md5": "d6e2308f8753e40adea26a4ef20a556a"
 }
 
 [deps]
@@ -22,8 +22,6 @@ dest_files=["res://.godot/imported/office_door_closed_tripo_image_9537d7f4-bad3-
 compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.75
-compress/uastc_level=0
-compress/rdo_quality_loss=0.0
 compress/hdr_compression=1
 compress/normal_map=1
 compress/channel_pack=0
@@ -31,10 +29,6 @@ mipmaps/generate=true
 mipmaps/limit=-1
 roughness/mode=1
 roughness/src_normal="res://assets/props/decorations/office_door_closed_tripo_image_9537d7f4-bad3-492f-9065-433e77a3eb82_2.jpg"
-process/channel_remap/red=0
-process/channel_remap/green=1
-process/channel_remap/blue=2
-process/channel_remap/alpha=3
 process/fix_alpha_border=true
 process/premult_alpha=false
 process/normal_map_invert_y=false

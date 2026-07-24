@@ -33,6 +33,7 @@ var _speed_smooth: float
 var _got_first: bool = false
 var _net_sprinting := false
 var _net_crouching := false
+var _net_slipping := false
 var _net_move_direction := Vector2.ZERO
 var _step_distance := 0.0
 var _step_stream: AudioStream = null
@@ -270,6 +271,7 @@ func update_target(msg: Dictionary) -> void:
 	_target_pitch = clampf(float(msg.get("pitch", 0.0)), -1.3, 1.3)
 	_net_sprinting = bool(msg.get("spr", false))
 	_net_crouching = bool(msg.get("cr", false))
+	_net_slipping = bool(msg.get("sl", false))
 	_net_move_direction = Vector2(float(msg.get("mx", 0.0)), float(msg.get("mz", -1.0))).normalized()
 
 	if not _got_first:
@@ -310,7 +312,7 @@ func _process(delta: float) -> void:
 	var frame_distance := global_position.distance_to(_prev_actual_pos)
 	_prev_actual_pos = global_position
 	_speed_smooth = lerp(_speed_smooth, moved, 10.0 * delta)
-	if _speed_smooth > WALK_THRESHOLD and not is_downed:
+	if _speed_smooth > WALK_THRESHOLD and not is_downed and not _net_slipping:
 		_step_distance += frame_distance
 		var stride := 1.05 if _net_sprinting else (1.65 if _net_crouching else 1.35)
 		if _step_distance >= stride:
@@ -353,7 +355,7 @@ func _update_animation() -> void:
 	# lowest bone so the visible body never floats or clips — smoothed.
 	if _pivot != null and is_instance_valid(_pivot):
 		var target_y := _grounded_pivot_y()
-		var snap_low_pose := is_downed or _execution_clip != "" \
+		var snap_low_pose := is_downed or _execution_clip != "" or _net_slipping \
 			or (_net_crouching and _speed_smooth <= WALK_THRESHOLD)
 		if snap_low_pose:
 			_pivot.position.y = target_y
@@ -374,7 +376,10 @@ func _update_animation() -> void:
 		return
 
 	var want := "idle"
-	if is_downed:
+	if _net_slipping and _anim_player.has_animation("player_slip_getup"):
+		want = "player_slip_getup"
+		_anim_player.speed_scale = 1.0
+	elif is_downed:
 		want = "crawl_down" if _speed_smooth > WALK_THRESHOLD else "downed"
 		_anim_player.speed_scale = 1.0
 	elif is_reviving:

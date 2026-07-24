@@ -1,17 +1,14 @@
 extends Node3D
-## Optional, deterministic world content: one persistent cassette, one noisy
-## power-restoration objective, physical theory pamphlets, and open anomalous
-## sectors. It deliberately does not own the main SNUS/exit progression.
+## Optional, deterministic world content: one persistent cassette, physical
+## notes, blood traces and anomalous sectors. It deliberately does not own the
+## main SNUS/emergency-button/exit progression.
 
 signal cassette_collected
-signal power_restored(center: Vector2i)
 signal anomaly_entered(kind: String, center: Vector2i)
 signal anomaly_left(kind: String, center: Vector2i)
 
 const CELL := 4.0
 const CASSETTE_CELL := Vector2i(-4, 13)
-const BREAKER_CELL := Vector2i(-12, 3)
-const BREAKER_HOLD_SECONDS := 4.0
 const INTERACT_RANGE := 2.4
 const HAND_FONT_PATH := "res://assets/fonts/caveat.ttf"
 const BLOOD_TRAIL_TEXTURE: Texture2D = preload("res://assets/textures/decals/blood_trail.png")
@@ -59,9 +56,6 @@ const ALL_PHOTOS := [
 var _player: Node3D
 var _maze: Node3D
 var _cassette: Node3D
-var _breaker: Node3D
-var _breaker_progress := 0.0
-var _power_done := false
 var _active_anomaly := -1
 var _pamphlets: Array[Node3D] = []
 var _reading_note := false
@@ -206,28 +200,37 @@ func _spawn_cassette() -> void:
 	glow.position.y = 0.3
 	_cassette.add_child(glow)
 
-func _spawn_breaker() -> void:
+func _shuffle_with_rng(values: Array, rng: RandomNumberGenerator) -> void:
+	# Array.shuffle() uses the process-global RNG.  That made co-op peers with
+	# the same run seed select different notes and locations.
+	for index in range(values.size() - 1, 0, -1):
+		var swap_index := rng.randi_range(0, index)
+		var held = values[index]
+		values[index] = values[swap_index]
+		values[swap_index] = held
+
+
 func _spawn_pamphlets() -> void:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = _run_seed ^ 0x4E4F5445
 
 	# 1. Pick 5 location candidates out of the available map locations
 	var available_locations := PAMPHLET_LOCATIONS.duplicate()
-	available_locations.shuffle()
+	_shuffle_with_rng(available_locations, rng)
 	var selected_locations: Array[Dictionary] = []
 	for i in range(min(5, available_locations.size())):
 		selected_locations.append(available_locations[i])
 
 	# 2. Pick 2 distinct random photos out of the 5 available photos
 	var available_photos := ALL_PHOTOS.duplicate()
-	available_photos.shuffle()
+	_shuffle_with_rng(available_photos, rng)
 	var selected_photos: Array[String] = []
 	for i in range(min(2, available_photos.size())):
 		selected_photos.append(available_photos[i])
 
 	# 3. Pick 3 distinct random texts out of the 6 advice texts
 	var available_texts := ADVICE_TEXTS.duplicate()
-	available_texts.shuffle()
+	_shuffle_with_rng(available_texts, rng)
 	var selected_texts: Array[String] = []
 	for i in range(min(3, available_texts.size())):
 		selected_texts.append(available_texts[i])
@@ -238,7 +241,7 @@ func _spawn_pamphlets() -> void:
 		note_contents.append({"image": p, "text": ""})
 	for t in selected_texts:
 		note_contents.append({"image": "", "text": t})
-	note_contents.shuffle()
+	_shuffle_with_rng(note_contents, rng)
 
 	# 5. Instantiate 5 3D note props
 	for index in selected_locations.size():
@@ -262,10 +265,14 @@ func _spawn_pamphlets() -> void:
 		else:
 			var mount: Dictionary = _maze.wall_mount_near(spec["cell"], 1.3) if _maze and _maze.has_method("wall_mount_near") else {}
 			if mount.is_empty():
-				root.queue_free()
-				continue
-			root.global_position = mount["position"]
-			root.rotation.y = float(mount["rotation_y"])
+				# A rare procedural wall mismatch must not silently reduce the
+				# requested five notes.  Fall back to the floor of that same cell.
+				root.global_position = _world(spec["cell"]) + Vector3(0, 0.003, 0)
+				root.rotation_degrees.x = -90.0
+				root.rotation_degrees.z = float(index * 37 % 70 - 35)
+			else:
+				root.global_position = mount["position"]
+				root.rotation.y = float(mount["rotation_y"])
 
 		var paper := MeshInstance3D.new()
 		var quad := QuadMesh.new()
@@ -302,8 +309,6 @@ func nearest_kind(from: Vector3) -> String:
 		return "pamphlet"
 	if is_instance_valid(_cassette) and from.distance_to(_cassette.global_position) <= INTERACT_RANGE:
 		return "cassette"
-	if not _power_done and is_instance_valid(_breaker) and from.distance_to(_breaker.global_position) <= INTERACT_RANGE:
-		return "breaker"
 	if is_instance_valid(_nearest_pamphlet(from)):
 		return "pamphlet"
 	return ""
@@ -311,11 +316,10 @@ func nearest_kind(from: Vector3) -> String:
 func prompt(from: Vector3) -> String:
 	match nearest_kind(from):
 		"cassette": return "TAKE THE CASSETTE"
-		"breaker": return "HOLD TO RESTORE AUX POWER  %.0f%%" % (_breaker_progress / BREAKER_HOLD_SECONDS * 100.0)
 		"pamphlet": return "CLOSE NOTE" if _reading_note else "OPEN NOTE"
 	return ""
 
-func tick_interaction(delta: float) -> bool:
+func tick_interaction(_delta: float) -> bool:
 	if not is_instance_valid(_player):
 		return false
 	if _reading_note:
@@ -326,13 +330,6 @@ func tick_interaction(delta: float) -> bool:
 	if kind == "cassette" and Input.is_action_just_pressed("interact"):
 		_collect_cassette()
 		return true
-	if kind == "breaker":
-		if Input.is_action_pressed("interact"):
-			_breaker_progress = minf(BREAKER_HOLD_SECONDS, _breaker_progress + delta)
-			if _breaker_progress >= BREAKER_HOLD_SECONDS:
-				_restore_power()
-			return true
-		_breaker_progress = maxf(0.0, _breaker_progress - delta * 1.5)
 	if kind == "pamphlet" and Input.is_action_just_pressed("interact"):
 		var pamphlet := _nearest_pamphlet(_player.global_position)
 		if is_instance_valid(pamphlet):
@@ -460,21 +457,6 @@ func remote_collect_cassette() -> void:
 		return
 	_collect_cassette()
 
-func _restore_power() -> void:
-	if _power_done:
-		return
-	_power_done = true
-	if is_instance_valid(_breaker):
-		var label := _breaker.get_node_or_null("Status") as Label3D
-		if label:
-			label.text = "AUX POWER\nRESTORED"
-			label.modulate = Color(0.25, 0.9, 0.35)
-	if _maze and _maze.has_method("set_zone_power"):
-		_maze.set_zone_power(BREAKER_CELL, 4, true)
-	power_restored.emit(BREAKER_CELL)
-
-func remote_restore_power() -> void:
-	_restore_power()
 
 func _tick_anomaly_zone() -> void:
 	if not is_instance_valid(_player):

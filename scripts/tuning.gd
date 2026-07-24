@@ -32,9 +32,9 @@ const NOISE_RANGE_SPRINT := 12.0      # heavy impacts carry down the corridor le
 # ---------------------------------------------------------------------------
 # Telephone risk/reward
 # ---------------------------------------------------------------------------
-const PHONE_TRAP_PERCENT := 0.30
+const PHONE_TRAP_PERCENT := 0.22
 const PHONE_TRAP_COOLDOWN := 60.0
-const PHONE_COUNT := 6
+const PHONE_COUNT := 4
 const PHONE_RADAR_PINGS := 4
 const PHONE_RADAR_PING_MIN_GAP := 2.4
 const PHONE_RADAR_PING_MAX_GAP := 3.8

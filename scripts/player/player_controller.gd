@@ -7,6 +7,7 @@ extends CharacterBody3D
 signal looked_back
 signal noise_emitted(world_position: Vector3, audible_range: float, kind: String)
 signal sprint_state_changed(active: bool, stamina_ratio: float)
+signal lens_focus_changed(blur_amount: float)
 
 @export var speed: float = Tuning.WALK_SPEED
 @export var gravity: float = 20.0
@@ -21,10 +22,19 @@ var is_downed: bool = false
 const EYE_HEIGHT: float = 1.55
 const DOWNED_EYE_HEIGHT: float = 0.35   # carpet level while crawling
 const BOB_SPEED: float = 7.0
-const BOB_AMOUNT: float = 0.030
-const STEP_TILT: float = 0.007          # shoulder weight shift during each stride
+const BOB_AMOUNT: float = 0.036
+const STEP_TILT: float = 0.0095         # shoulder weight shift during each stride
 const IDLE_TILT: float = 0.0018         # faint breathing roll when standing still
 const STEP_SFX_PATH: String = "res://assets/audio/sfx/player/player_player_step_carpet.mp3"
+const ZOOM_IN_SFX_PATH := "res://assets/audio/sfx/camera/zoom_in.mp3"
+const ZOOM_OUT_SFX_PATH := "res://assets/audio/sfx/camera/zoom_out.mp3"
+const BREATHING_CONTROLLER_SCRIPT := \
+	"res://scripts/player/breathing_audio_controller.gd"
+const ZOOM_MIN_FOV := 42.0
+const ZOOM_MAX_FOV := 82.0
+const ZOOM_STEP_FOV := 4.0
+const ZOOM_FALLBACK_DURATION := 1.384
+const FOCUS_HOLD_SECONDS := 0.30
 const CAMERA_MOTION_IDLE := 0
 const CAMERA_MOTION_WALK := 1
 const CAMERA_MOTION_RUN := 2
@@ -42,10 +52,10 @@ var _bob_pitch: float = 0.0
 var _camera_motion_mode := CAMERA_MOTION_IDLE
 var _camera_motion_intensity := 0.0
 var _profile_bob_amount := BOB_AMOUNT
-var _profile_sway_amount := BOB_AMOUNT * 0.55
+var _profile_sway_amount := BOB_AMOUNT * 0.61
 var _profile_roll_amount := STEP_TILT
-var _profile_pitch_amount := 0.0045
-var _profile_micro_amount := 0.0015
+var _profile_pitch_amount := 0.0065
+var _profile_micro_amount := 0.0023
 var _profile_frequency_scale := 1.0
 var _micro_noise := FastNoiseLite.new()
 var _micro_noise_time := 0.0
@@ -53,8 +63,31 @@ var _heel_spring_position := 0.0
 var _heel_spring_velocity := 0.0
 var _turn_spring_position := 0.0
 var _turn_spring_velocity := 0.0
+var _was_walking := false
+var _camera_motion_position := Vector3.ZERO
+var _camera_motion_rotation := Vector3.ZERO
+var _step_lateral_position := 0.0
+var _step_lateral_velocity := 0.0
+var _step_roll_position := 0.0
+var _step_roll_velocity := 0.0
+var _stride_frequency_variation := 1.0
 
 var _step_stream: AudioStream = null
+var _zoom_audio: AudioStreamPlayer = null
+var _zoom_in_stream: AudioStream = null
+var _zoom_out_stream: AudioStream = null
+var _zoom_target_fov := 72.0
+var _zoom_current_fov := 72.0
+var _zoom_motion_start_fov := 72.0
+var _zoom_motion_elapsed := 0.0
+var _zoom_motion_duration := ZOOM_FALLBACK_DURATION
+var _zoom_motion_active := false
+var _locomotion_fov_offset := 0.0
+var _zoom_focus_pending := false
+var _zoom_was_moving := false
+var _focus_hold_remaining := 0.0
+var _focus_blur_amount := 0.0
+var _breathing_audio: Node = null
 var shake_intensity: float = 0.0
 
 var _mesh_root: Node3D
@@ -77,6 +110,8 @@ var _sprint_regen_delay: float = 0.0
 var _sprint_exhausted: bool = false
 var _last_sprint_active: bool = false
 var _last_stamina_bucket: int = 10
+var is_being_chased: bool = false
+var red_effect_active: bool = false
 
 # Look-back tracking.
 var _facing_ref: float = 0.0
@@ -120,6 +155,8 @@ func _ready() -> void:
 		var res := ResourceLoader.load(STEP_SFX_PATH)
 		if res is AudioStream:
 			_step_stream = res
+	_setup_camera_zoom_audio()
+	_setup_breathing_audio()
 
 	_facing_ref = rotation.y
 	_spawn_fp_body() # Esta linha cria o boneco na memória
@@ -131,9 +168,19 @@ func _unhandled_input(event: InputEvent) -> void:
 	var is_hiding: bool = bool(get_meta("is_hiding", false))
 	# Click-to-recapture — pointer lock needs a user gesture on web.
 	if event is InputEventMouseButton and event.pressed:
-		if not menu_input_blocked and (not frozen or is_hiding) and Input.mouse_mode != Input.MOUSE_MODE_CAPTURED:
+		var mouse_button := event as InputEventMouseButton
+		if not menu_input_blocked and (not frozen or is_hiding) \
+				and Input.mouse_mode != Input.MOUSE_MODE_CAPTURED:
 			Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
-		return
+			return
+		if not menu_input_blocked and not frozen \
+				and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
+			if mouse_button.button_index == MOUSE_BUTTON_WHEEL_UP:
+				_adjust_camera_zoom(-ZOOM_STEP_FOV)
+				return
+			if mouse_button.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+				_adjust_camera_zoom(ZOOM_STEP_FOV)
+				return
 
 	if (frozen or menu_input_blocked) and not is_hiding:
 		return
@@ -165,11 +212,14 @@ func _physics_process(delta: float) -> void:
 		camera.position.y = lerpf(camera.position.y, EYE_HEIGHT, clampf(delta * 10.0, 0.0, 1.0))
 		camera.rotation.x = _pitch
 		camera.rotation.z = lerpf(camera.rotation.z, 0.0, clampf(delta * 10.0, 0.0, 1.0))
+		_update_camera_zoom(delta)
 		# Hold breath while hiding in locker (Space or Right Mouse Button)
 		is_holding_breath = Input.is_physical_key_pressed(KEY_SPACE) or Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT)
+		_update_breathing_audio(delta)
 		return
 	else:
 		is_holding_breath = false
+	_update_breathing_audio(delta)
 
 	if frozen or menu_input_blocked:
 		_camera_motion_mode = CAMERA_MOTION_IDLE
@@ -182,31 +232,17 @@ func _physics_process(delta: float) -> void:
 			_update_body_animation()
 		return
 
-	# Crouching check (Ctrl or C key)
-	var wants_crouch := Input.is_physical_key_pressed(KEY_CTRL) or Input.is_physical_key_pressed(KEY_C)
+	# Crouch is remappable from Settings.
+	var wants_crouch := Input.is_action_pressed("crouch")
 	is_crouching = wants_crouch
 
 	var input_dir := Input.get_vector("move_left", "move_right", "move_forward", "move_back")
-	if input_dir.length_squared() < 0.01:
-		var raw_x := 0.0
-		var raw_y := 0.0
-		if Input.is_physical_key_pressed(KEY_W) or Input.is_physical_key_pressed(KEY_UP):
-			raw_y -= 1.0
-		if Input.is_physical_key_pressed(KEY_S) or Input.is_physical_key_pressed(KEY_DOWN):
-			raw_y += 1.0
-		if Input.is_physical_key_pressed(KEY_A) or Input.is_physical_key_pressed(KEY_LEFT):
-			raw_x -= 1.0
-		if Input.is_physical_key_pressed(KEY_D) or Input.is_physical_key_pressed(KEY_RIGHT):
-			raw_x += 1.0
-		input_dir = Vector2(raw_x, raw_y)
-		if input_dir.length_squared() > 0.01:
-			input_dir = input_dir.normalized()
 
 	var is_trying_to_move := input_dir.length() > 0.1
-	var is_pressing_forward := (Input.is_action_pressed("move_forward") or Input.is_physical_key_pressed(KEY_W) or Input.is_physical_key_pressed(KEY_UP)) and input_dir.y < -0.1
+	var is_pressing_forward := Input.is_action_pressed("move_forward") \
+		and input_dir.y < -0.1
 	_update_sprint(delta, is_trying_to_move, is_pressing_forward)
-	var target_fov := 78.0 if is_sprinting else (70.0 if _sprint_exhausted else 72.0)
-	camera.fov = lerpf(camera.fov, target_fov, clampf(delta * 5.0, 0.0, 1.0))
+	_update_camera_zoom(delta)
 
 	var target_speed := speed
 	var target_eye_height := EYE_HEIGHT
@@ -256,10 +292,16 @@ func _physics_process(delta: float) -> void:
 			velocity.x = move_toward(velocity.x, 0.0, friction * delta)
 			velocity.z = move_toward(velocity.z, 0.0, friction * delta)
 
-	# Check wet floor slipping hazard when sprinting or moving fast
-	if is_sprinting and not _is_slipping:
+	_wet_floor_immunity = maxf(0.0, _wet_floor_immunity - delta)
+
+	# The state flag can drop on the exact frame stamina reaches zero, while the
+	# body is still physically travelling at running speed. Either condition is
+	# enough to make the wet carpet dangerous.
+	var horizontal_speed := Vector2(velocity.x, velocity.z).length()
+	var running_on_floor := is_sprinting or horizontal_speed > speed * 1.22
+	if running_on_floor and not _is_slipping and _wet_floor_immunity <= 0.0:
 		for area in get_tree().get_nodes_in_group("wet_floor"):
-			if is_instance_valid(area) and area.global_position.distance_to(global_position) < 2.0:
+			if _is_inside_wet_floor(area):
 				slip_on_wet_floor(direction)
 				break
 
@@ -297,6 +339,12 @@ func _physics_process(delta: float) -> void:
 			camera.rotation.x = lerpf(camera.rotation.x, 0.0, 8.0 * delta)
 			camera.rotation.z = lerpf(camera.rotation.z, 0.0, 8.0 * delta)
 
+		# This target used to be assigned after the normal eye-height update and
+		# was therefore never applied. Slip exclusively owns the camera height.
+		camera.position.y = lerpf(
+			camera.position.y, target_eye_height, 1.0 - exp(-18.0 * delta))
+		_current_eye_height = camera.position.y
+
 		_slip_timer -= delta
 		velocity.x = lerpf(velocity.x, 0.0, 4.0 * delta)
 		velocity.z = lerpf(velocity.z, 0.0, 4.0 * delta)
@@ -304,8 +352,9 @@ func _physics_process(delta: float) -> void:
 		if _slip_timer <= 0.0:
 			_is_slipping = false
 			_slip_impact_done = false
+			_wet_floor_immunity = 0.8
 			camera.rotation.z = 0.0
-			camera.rotation.x = 0.0
+			camera.rotation.x = _pitch
 			if is_instance_valid(_anim_player):
 				var getup_clips := ["player_get_up", "player_recover", "get_up", "idle"]
 				for gc in getup_clips:
@@ -314,10 +363,152 @@ func _physics_process(delta: float) -> void:
 						break
 
 	move_and_slide()
+	if _is_slipping and not _slip_hit_wall:
+		for collision_index in get_slide_collision_count():
+			var collision := get_slide_collision(collision_index)
+			if collision == null:
+				continue
+			var normal := collision.get_normal()
+			# Floors keep the fall grounded; only a mostly-horizontal normal is
+			# a wall/large prop. Stop the impulse instead of repeatedly pushing
+			# the body (and first-person mesh) into that surface.
+			if absf(normal.y) < 0.45:
+				_slip_hit_wall = true
+				velocity.x = 0.0
+				velocity.z = 0.0
+				break
 
 	_update_head_bob(delta)
 	_update_look_back()
 	_update_body_animation()
+
+
+func _setup_breathing_audio() -> void:
+	if not ResourceLoader.exists(BREATHING_CONTROLLER_SCRIPT):
+		push_warning("player: missing " + BREATHING_CONTROLLER_SCRIPT)
+		return
+	var controller_script := load(BREATHING_CONTROLLER_SCRIPT) as Script
+	if controller_script == null:
+		return
+	_breathing_audio = controller_script.new()
+	_breathing_audio.name = "BreathingAudioController"
+	add_child(_breathing_audio)
+
+
+func _setup_camera_zoom_audio() -> void:
+	if ResourceLoader.exists(ZOOM_IN_SFX_PATH):
+		_zoom_in_stream = load(ZOOM_IN_SFX_PATH) as AudioStream
+	if ResourceLoader.exists(ZOOM_OUT_SFX_PATH):
+		_zoom_out_stream = load(ZOOM_OUT_SFX_PATH) as AudioStream
+	_zoom_audio = AudioStreamPlayer.new()
+	_zoom_audio.name = "CameraZoomMotor"
+	_zoom_audio.bus = "SFX"
+	_zoom_audio.volume_db = -7.0
+	add_child(_zoom_audio)
+
+
+func _adjust_camera_zoom(fov_delta: float) -> void:
+	var previous_target := _zoom_target_fov
+	_zoom_target_fov = clampf(
+		_zoom_target_fov + fov_delta, ZOOM_MIN_FOV, ZOOM_MAX_FOV)
+	if is_equal_approx(previous_target, _zoom_target_fov):
+		return
+	_zoom_focus_pending = true
+	_zoom_was_moving = true
+	_focus_hold_remaining = 0.0
+	_zoom_motion_start_fov = _zoom_current_fov
+	_zoom_motion_elapsed = 0.0
+	_zoom_motion_duration = _play_camera_zoom_motor(fov_delta < 0.0)
+	_zoom_motion_active = true
+
+
+func _play_camera_zoom_motor(zooming_in: bool) -> float:
+	if not is_instance_valid(_zoom_audio):
+		return ZOOM_FALLBACK_DURATION
+	var wanted_stream := _zoom_in_stream if zooming_in else _zoom_out_stream
+	if wanted_stream == null:
+		return ZOOM_FALLBACK_DURATION
+	var stream_duration := wanted_stream.get_length()
+	if stream_duration <= 0.0:
+		stream_duration = ZOOM_FALLBACK_DURATION
+	# Repeated wheel notches in the same direction extend the lens target without
+	# restarting its motor sample. The new target uses precisely the sound time
+	# remaining before its mechanical click. Reversing direction swaps motors.
+	if _zoom_audio.stream != wanted_stream:
+		_zoom_audio.stream = wanted_stream
+		_zoom_audio.play()
+		return stream_duration
+	elif not _zoom_audio.playing:
+		_zoom_audio.play()
+		return stream_duration
+	return maxf(stream_duration - _zoom_audio.get_playback_position(), 0.08)
+
+
+func _update_camera_zoom(delta: float) -> void:
+	if not is_instance_valid(camera):
+		return
+	if _zoom_motion_active:
+		_zoom_motion_elapsed = minf(
+			_zoom_motion_elapsed + delta, _zoom_motion_duration)
+		var progress := clampf(
+			_zoom_motion_elapsed / maxf(_zoom_motion_duration, 0.001), 0.0, 1.0)
+		# Smootherstep models the motor accelerating, travelling and braking. It
+		# reaches its endpoint exactly as the MP3's final mechanical click plays.
+		var motor_curve := progress * progress * progress \
+			* (progress * (progress * 6.0 - 15.0) + 10.0)
+		_zoom_current_fov = lerpf(
+			_zoom_motion_start_fov, _zoom_target_fov, motor_curve)
+		if progress >= 1.0:
+			_zoom_current_fov = _zoom_target_fov
+			_zoom_motion_active = false
+			if _zoom_focus_pending and _zoom_was_moving:
+				_zoom_was_moving = false
+				_focus_hold_remaining = FOCUS_HOLD_SECONDS
+
+	var locomotion_fov_target := 6.0 if is_sprinting \
+		else (-2.0 if _sprint_exhausted else 0.0)
+	_locomotion_fov_offset = lerpf(
+		_locomotion_fov_offset,
+		locomotion_fov_target,
+		1.0 - exp(-5.0 * delta))
+	camera.fov = clampf(
+		_zoom_current_fov + _locomotion_fov_offset,
+		ZOOM_MIN_FOV,
+		ZOOM_MAX_FOV + 6.0)
+
+	var target_blur := 0.0
+	if _zoom_focus_pending and _zoom_motion_active:
+		# Slight optical softness while glass elements are physically moving.
+		target_blur = 0.07
+
+	if _focus_hold_remaining > 0.0:
+		_focus_hold_remaining = maxf(0.0, _focus_hold_remaining - delta)
+		# A short autofocus hunt: hold briefly, then recover smoothly.
+		if _focus_hold_remaining > 0.18:
+			target_blur = 0.46
+		else:
+			target_blur = 0.46 * (_focus_hold_remaining / 0.18)
+		if _focus_hold_remaining <= 0.0:
+			_zoom_focus_pending = false
+
+	_focus_blur_amount = lerpf(
+		_focus_blur_amount, target_blur, 1.0 - exp(-18.0 * delta))
+	if target_blur <= 0.0 and _focus_blur_amount < 0.001:
+		_focus_blur_amount = 0.0
+	lens_focus_changed.emit(_focus_blur_amount)
+
+
+func _update_breathing_audio(delta: float) -> void:
+	if not is_instance_valid(_breathing_audio) \
+			or not _breathing_audio.has_method("update_conditions"):
+		return
+	_breathing_audio.update_conditions(
+		delta,
+		is_sprinting,
+		_sprint_exhausted,
+		is_being_chased,
+		red_effect_active,
+		is_holding_breath or is_dead)
 
 
 var _is_slipping := false
@@ -325,11 +516,13 @@ var _slip_impact_done := false
 var _slip_timer := 0.0
 var _slip_total_duration := 1.2
 var _slip_dir := Vector3.ZERO
+var _wet_floor_immunity := 0.0
+var _slip_hit_wall := false
 
 func _trigger_slip_impact_glitch() -> void:
 	if has_node("/root/AudioManager"):
-		var thud_sfx = load("res://assets/audio/sfx/environment/environment_light_flicker_buzz.mp3")
-		AudioManager.play_sfx(thud_sfx, 3.0)
+		if ResourceLoader.exists(STEP_SFX_PATH):
+			AudioManager.play_sfx(load(STEP_SFX_PATH), -5.0, 0.64)
 
 	var tree := get_tree()
 	if tree:
@@ -345,13 +538,27 @@ func slip_on_wet_floor(dir: Vector3) -> void:
 		return
 	_is_slipping = true
 	_slip_impact_done = false
+	_slip_hit_wall = false
 	_slip_total_duration = 1.4
 	_slip_dir = dir.normalized() * 7.5
 	if dir.length() < 0.1:
 		_slip_dir = -transform.basis.z * 7.5
+	# CharacterBody3D performs a swept collision during move_and_slide(). This
+	# short preflight also prevents a full-strength impulse when the player is
+	# already standing almost against a wall.
+	var probe_motion := Vector3(_slip_dir.x, 0.0, _slip_dir.z).normalized() * 0.55
+	# `recovery_as_collision=false` prevents ordinary floor contact from being
+	# mistaken for a wall and reducing every slip to 12% strength.
+	if test_move(global_transform, probe_motion, null, 0.001, false, 4):
+		_slip_dir *= 0.12
+		_slip_hit_wall = true
+	# The previous implementation calculated this impulse but never applied it,
+	# so the player only tilted in place instead of actually sliding.
+	velocity.x = _slip_dir.x
+	velocity.z = _slip_dir.z
 	if has_node("/root/AudioManager"):
-		var splash_sfx = load("res://assets/audio/sfx/environment/environment_light_flicker_buzz.mp3")
-		AudioManager.play_sfx(splash_sfx, 0.0)
+		if ResourceLoader.exists(STEP_SFX_PATH):
+			AudioManager.play_sfx(load(STEP_SFX_PATH), -9.0, 0.82)
 
 	if is_instance_valid(_anim_player):
 		var slip_clips := ["player_slip_getup", "slip_and_getup", "stumble_recover", "player_slip", "player_stumble", "stumble", "slip"]
@@ -361,6 +568,17 @@ func slip_on_wet_floor(dir: Vector3) -> void:
 				_slip_total_duration = maxf(1.0, _anim_player.get_animation(sc).length)
 				break
 	_slip_timer = _slip_total_duration
+
+
+func _is_inside_wet_floor(area: Node) -> bool:
+	if not is_instance_valid(area) or not area is Node3D:
+		return false
+	var wet_floor := area as Node3D
+	var radius := maxf(float(wet_floor.get_meta("wet_floor_radius", 1.55)), 0.1)
+	var offset := wet_floor.global_position - global_position
+	# Horizontal distance matches the cylinder footprint and is independent of
+	# small grounding/animation differences on the Y axis.
+	return Vector2(offset.x, offset.z).length_squared() <= radius * radius
 
 
 func _update_sprint(delta: float, is_trying_to_move: bool, is_pressing_forward: bool) -> void:
@@ -395,6 +613,11 @@ func _update_sprint(delta: float, is_trying_to_move: bool, is_pressing_forward: 
 
 
 func _update_head_bob(delta: float) -> void:
+	# Slip owns the local camera transform while its fall/recovery phases run.
+	# Letting headbob write afterwards erased the fall pitch and caused flicker.
+	if _is_slipping:
+		_was_walking = false
+		return
 	var horizontal_speed := Vector2(velocity.x, velocity.z).length()
 	var walking := is_on_floor() and horizontal_speed > 0.3
 
@@ -405,6 +628,7 @@ func _update_head_bob(delta: float) -> void:
 	# transform prevents the old world-space orbit and the body camera from
 	# fighting each other, and avoids clipping through the local skinned mesh.
 	if is_downed:
+		_was_walking = false
 		_camera_motion_mode = CAMERA_MOTION_IDLE
 		_camera_motion_intensity = lerpf(
 			_camera_motion_intensity, 0.0, clampf(delta * 12.0, 0.0, 1.0))
@@ -416,6 +640,11 @@ func _update_head_bob(delta: float) -> void:
 			_turn_spring_position, 0.0, clampf(delta * 10.0, 0.0, 1.0))
 		_turn_spring_velocity = lerpf(
 			_turn_spring_velocity, 0.0, clampf(delta * 10.0, 0.0, 1.0))
+		_step_lateral_position = 0.0
+		_step_lateral_velocity = 0.0
+		_step_roll_position = 0.0
+		_step_roll_velocity = 0.0
+		_stride_frequency_variation = 1.0
 		_bob_pitch = lerpf(_bob_pitch, 0.0, clampf(delta * 10.0, 0.0, 1.0))
 		shake_intensity = lerpf(shake_intensity, 0.0, clampf(delta * 16.0, 0.0, 1.0))
 		var crawl_sway := sin(_idle_time * 1.7) * 0.003 \
@@ -430,20 +659,20 @@ func _update_head_bob(delta: float) -> void:
 	# snaps the camera. Downed keeps the previous neutral crawl behaviour.
 	var target_mode := CAMERA_MOTION_IDLE
 	var target_bob := BOB_AMOUNT
-	var target_sway := BOB_AMOUNT * 0.55
+	var target_sway := BOB_AMOUNT * 0.61
 	var target_roll := STEP_TILT
-	var target_pitch := 0.0045
-	var target_micro := 0.0015
+	var target_pitch := 0.0065
+	var target_micro := 0.0023
 	var target_frequency := 1.0
 	var reference_speed := speed
 	if walking and not is_downed:
 		if is_sprinting:
 			target_mode = CAMERA_MOTION_RUN
-			target_bob = 0.052
-			target_sway = 0.029
-			target_roll = 0.013
-			target_pitch = 0.009
-			target_micro = 0.0050
+			target_bob = 0.056
+			target_sway = 0.035
+			target_roll = 0.016
+			target_pitch = 0.011
+			target_micro = 0.0055
 			target_frequency = 1.04
 			reference_speed = Tuning.SPRINT_SPEED
 		elif is_crouching:
@@ -464,8 +693,11 @@ func _update_head_bob(delta: float) -> void:
 	_camera_motion_mode = target_mode
 	var raw_intensity := clampf(horizontal_speed / maxf(reference_speed, 0.1), 0.0, 1.0) \
 		if walking and not is_downed else 0.0
-	_camera_motion_intensity = lerpf(_camera_motion_intensity, raw_intensity,
-		clampf(delta * 9.0, 0.0, 1.0))
+	# Velocity only controls the weight of the locomotion layer. Idle breathing,
+	# look inertia and step motion remain independent, so pressing a movement key
+	# never replaces the transform currently visible on screen.
+	_camera_motion_intensity = lerpf(
+		_camera_motion_intensity, raw_intensity, 1.0 - exp(-5.5 * delta))
 	var profile_blend := clampf(delta * 7.5, 0.0, 1.0)
 	_profile_bob_amount = lerpf(_profile_bob_amount, target_bob, profile_blend)
 	_profile_sway_amount = lerpf(_profile_sway_amount, target_sway, profile_blend)
@@ -493,64 +725,85 @@ func _update_head_bob(delta: float) -> void:
 	if walking:
 		# Scale step frequency with movement speed
 		var speed_mult := clampf(horizontal_speed / speed, 0.5, 1.8)
-		_bob_time += delta * BOB_SPEED * speed_mult * _profile_frequency_scale
-		
-		# Infinitesimal Lissajous figure-8: one lateral oscillation for every
-		# two vertical weight transfers. Unlike abs(sin), this has smooth curvature.
-		var lissajous_x: float = sin(_bob_time)
-		var lissajous_y: float = sin(_bob_time * 2.0 + PI * 0.5)
-		var phase_cos: float = cos(_bob_time)
-		
-		var vertical_dip: float = (lissajous_y - 1.0) * 0.5 * _profile_bob_amount
-		
-		var horizontal_sway: float = lissajous_x * _profile_sway_amount
-		
-		camera.position.y = _current_eye_height + vertical_dip \
-			+ _heel_spring_position + idle_sway + micro_y
-		camera.position.x = horizontal_sway + micro_x
-		camera.position.z = micro_z
-		
-		camera.rotation.z = -lissajous_x * _profile_roll_amount \
-			+ micro_roll + _turn_spring_position
-		_bob_pitch = lerpf(_bob_pitch,
-			vertical_dip / maxf(_profile_bob_amount, 0.001) * _profile_pitch_amount,
-			clampf(8.0 * delta, 0.0, 1.0))
+		_bob_time += delta * BOB_SPEED * speed_mult \
+			* _profile_frequency_scale * _stride_frequency_variation
 
-		# At each heel strike, inject a sudden downward velocity into a critically
-		# damped neck spring. The displacement is sharp but absorbed, never snapped.
-		if (_prev_bob_cos >= 0.0 and phase_cos < 0.0) \
-				or (_prev_bob_cos <= 0.0 and phase_cos > 0.0):
+	# Infinitesimal Lissajous figure-8. Its phase remains continuous while the
+	# locomotion weight fades in/out. Slow noise warps the visual phase and
+	# amplitude without affecting heel-strike detection, so the gait never loops
+	# as an identical mechanical side-to-side cycle.
+	var phase_warp := _micro_noise.get_noise_1d(
+		_micro_noise_time * 0.19 + 997.0) * 0.13
+	var organic_phase := _bob_time + phase_warp
+	var stride_amplitude := 1.0 + _micro_noise.get_noise_1d(
+		_micro_noise_time * 0.13 + 1297.0) * 0.12
+	var lissajous_x: float = sin(organic_phase)
+	var lissajous_y: float = sin(organic_phase * 2.0 + PI * 0.5)
+	var phase_cos: float = cos(_bob_time)
+	var vertical_dip: float = (lissajous_y - 1.0) * 0.5 \
+		* _profile_bob_amount * stride_amplitude
+	var horizontal_sway: float = lissajous_x \
+		* _profile_sway_amount * stride_amplitude
+
+	if walking:
+		# Do not treat the first moving frame as a heel strike. Previously
+		# `_prev_bob_cos = 0` matched either sign and injected a visible micro-drop
+		# at the exact instant W was pressed.
+		if _was_walking and ((_prev_bob_cos >= 0.0 and phase_cos < 0.0) \
+				or (_prev_bob_cos <= 0.0 and phase_cos > 0.0)):
 			var heel_impulse := 0.17
 			if target_mode == CAMERA_MOTION_RUN:
 				heel_impulse = 0.30
 			elif target_mode == CAMERA_MOTION_CROUCH:
 				heel_impulse = 0.075
-			elif is_downed:
-				heel_impulse = 0.11
+			heel_impulse *= randf_range(0.86, 1.16)
 			_heel_spring_velocity -= heel_impulse
+			var foot_side := 1.0 if sin(_bob_time) >= 0.0 else -1.0
+			_step_lateral_velocity += foot_side * randf_range(0.14, 0.22)
+			_step_roll_velocity += foot_side * randf_range(0.10, 0.17)
+			_stride_frequency_variation = randf_range(0.91, 1.09)
 			_play_footstep()
 		_prev_bob_cos = phase_cos
 	else:
-		# Premium figure-8 breathing sway in 3D space when idle
-		var idle_sway_x := sin(_idle_time * 0.8) * 0.008
-		var idle_sway_y := cos(_idle_time * 1.4) * 0.006
-		var base := _current_eye_height + idle_sway + idle_sway_y
-		camera.position.y = lerpf(
-			camera.position.y, base + micro_y, clampf(delta * 6.0, 0.0, 1.0))
-		camera.position.x = lerpf(
-			camera.position.x, idle_sway_x + micro_x, clampf(delta * 6.0, 0.0, 1.0))
-		camera.position.z = lerpf(
-			camera.position.z, micro_z, clampf(delta * 6.0, 0.0, 1.0))
-
-		var idle_roll := sin(_idle_time * 0.9) * IDLE_TILT \
-			+ micro_roll + _turn_spring_position
-		camera.rotation.z = lerpf(camera.rotation.z, idle_roll, clampf(delta * 4.0, 0.0, 1.0))
-		_bob_pitch = lerpf(_bob_pitch, 0.0, clampf(delta * 6.0, 0.0, 1.0))
 		_prev_bob_cos = 0.0
+		_stride_frequency_variation = lerpf(
+			_stride_frequency_variation, 1.0, 1.0 - exp(-3.0 * delta))
 
-	# Player pitch rules; the bob is only ever a whisper on top of it.
-	camera.rotation.x = _pitch + _bob_pitch + micro_pitch
-	camera.rotation.y = micro_yaw - _turn_spring_position * 0.34
+	var movement_weight := _camera_motion_intensity
+	var idle_weight := 1.0 - movement_weight * 0.76
+	var idle_sway_x := sin(_idle_time * 0.8) * 0.008
+	var idle_sway_y := cos(_idle_time * 1.4) * 0.006
+	var target_bob_pitch := vertical_dip \
+		/ maxf(_profile_bob_amount, 0.001) * _profile_pitch_amount \
+		* movement_weight
+	_bob_pitch = lerpf(
+		_bob_pitch, target_bob_pitch, 1.0 - exp(-8.0 * delta))
+
+	var target_motion_position := Vector3(
+		idle_sway_x * idle_weight + horizontal_sway * movement_weight \
+			+ _step_lateral_position * movement_weight + micro_x,
+		(idle_sway + idle_sway_y) * idle_weight \
+			+ vertical_dip * movement_weight + _heel_spring_position + micro_y,
+		micro_z)
+	var target_motion_rotation := Vector3(
+		_bob_pitch + micro_pitch,
+		micro_yaw - _turn_spring_position * 0.34,
+		sin(_idle_time * 0.9) * IDLE_TILT * idle_weight \
+			- lissajous_x * _profile_roll_amount * movement_weight \
+			+ _step_roll_position * movement_weight \
+			+ micro_roll + _turn_spring_position)
+
+	# A final inertial filter absorbs any remaining difference between profiles.
+	# Mouse pitch itself is deliberately excluded so looking remains immediate.
+	_camera_motion_position = _camera_motion_position.lerp(
+		target_motion_position, 1.0 - exp(-12.0 * delta))
+	_camera_motion_rotation = _camera_motion_rotation.lerp(
+		target_motion_rotation, 1.0 - exp(-14.0 * delta))
+	camera.position = Vector3(0.0, _current_eye_height, 0.0) \
+		+ _camera_motion_position
+	camera.rotation = Vector3(_pitch, 0.0, 0.0) \
+		+ _camera_motion_rotation
+	_was_walking = walking
 
 	# Apply dynamic camera shake (e.g. from nearby sprinting entity)
 	if shake_intensity > 0.001:
@@ -580,6 +833,18 @@ func _tick_camera_springs(delta: float) -> void:
 	_turn_spring_velocity += turn_acceleration * dt
 	_turn_spring_position += _turn_spring_velocity * dt
 	_turn_spring_position = clampf(_turn_spring_position, -0.055, 0.055)
+
+	var lateral_acceleration := -150.0 * _step_lateral_position \
+		- 21.0 * _step_lateral_velocity
+	_step_lateral_velocity += lateral_acceleration * dt
+	_step_lateral_position += _step_lateral_velocity * dt
+	_step_lateral_position = clampf(_step_lateral_position, -0.012, 0.012)
+
+	var step_roll_acceleration := -135.0 * _step_roll_position \
+		- 20.0 * _step_roll_velocity
+	_step_roll_velocity += step_roll_acceleration * dt
+	_step_roll_position += _step_roll_velocity * dt
+	_step_roll_position = clampf(_step_roll_position, -0.014, 0.014)
 
 
 func _play_footstep() -> void:
@@ -661,6 +926,14 @@ func set_menu_input_blocked(v: bool) -> void:
 		velocity = Vector3.ZERO
 
 
+func set_being_chased(active: bool) -> void:
+	is_being_chased = active
+
+
+func set_red_effect_active(active: bool) -> void:
+	red_effect_active = active
+
+
 ## CX30 — plant the camera at crawl height with every handheld impulse cleared.
 ## Called under the jumpscare's black screen, before a single frame of `downed`
 ## is revealed, so the fade back in cannot show the drop from eye height, a
@@ -671,6 +944,9 @@ func stabilize_downed_camera() -> void:
 	_current_eye_height = DOWNED_EYE_HEIGHT
 	_camera_motion_mode = CAMERA_MOTION_IDLE
 	_camera_motion_intensity = 0.0
+	_camera_motion_position = Vector3.ZERO
+	_camera_motion_rotation = Vector3.ZERO
+	_was_walking = false
 	_bob_time = 0.0
 	_prev_bob_cos = 0.0
 	_bob_pitch = 0.0
@@ -678,10 +954,25 @@ func stabilize_downed_camera() -> void:
 	_heel_spring_velocity = 0.0
 	_turn_spring_position = 0.0
 	_turn_spring_velocity = 0.0
+	_step_lateral_position = 0.0
+	_step_lateral_velocity = 0.0
+	_step_roll_position = 0.0
+	_step_roll_velocity = 0.0
+	_stride_frequency_variation = 1.0
 	shake_intensity = 0.0
 	camera.position = Vector3(0.0, DOWNED_EYE_HEIGHT, 0.0)
 	camera.rotation = Vector3(_pitch, 0.0, 0.0)
-	camera.fov = 72.0
+	_zoom_current_fov = _zoom_target_fov
+	_zoom_motion_start_fov = _zoom_target_fov
+	_zoom_motion_active = false
+	_locomotion_fov_offset = 0.0
+	_zoom_focus_pending = false
+	_focus_hold_remaining = 0.0
+	_focus_blur_amount = 0.0
+	if is_instance_valid(_zoom_audio):
+		_zoom_audio.stop()
+	lens_focus_changed.emit(0.0)
+	camera.fov = _zoom_target_fov
 	# The execution pulled the near plane in to 0.05; put it back before the
 	# world becomes visible again.
 	camera.near = 0.08
@@ -691,9 +982,16 @@ func stabilize_downed_camera() -> void:
 func restore_first_person_camera() -> void:
 	if not is_instance_valid(camera):
 		return
+	_camera_motion_position = Vector3.ZERO
+	_camera_motion_rotation = Vector3.ZERO
+	_was_walking = false
 	camera.position = Vector3(0.0, EYE_HEIGHT, 0.0)
 	camera.rotation = Vector3(_pitch, 0.0, 0.0)
-	camera.fov = 72.0
+	_zoom_current_fov = _zoom_target_fov
+	_zoom_motion_start_fov = _zoom_target_fov
+	_zoom_motion_active = false
+	_locomotion_fov_offset = 0.0
+	camera.fov = _zoom_target_fov
 	camera.near = 0.08
 
 
@@ -836,7 +1134,7 @@ func _update_body_animation() -> void:
 	if _fp_pivot != null and is_instance_valid(_fp_pivot):
 		var execution_on_floor := _execution_clip in [
 			"player_eaten_start", "player_eaten_loop", "player_eaten_death"]
-		var low_pose := is_downed or is_dead or execution_on_floor
+		var low_pose := is_downed or is_dead or execution_on_floor or _is_slipping
 		var target_y: float = _grounded_pivot_y() if low_pose else _stand_ground_offset
 		# Lying poses must reach the carpet on the same frame. Standing corrections
 		# remain smoothed to avoid visible foot jitter.
@@ -857,6 +1155,12 @@ func _update_body_animation() -> void:
 	# Execution phases are advanced by EntityDirector. Even when a one-shot ends,
 	# hold its final pose instead of returning to idle between paired clips.
 	if _execution_clip != "":
+		return
+	if _is_slipping:
+		if _anim_player.has_animation("player_slip_getup") \
+				and _anim_player.current_animation != "player_slip_getup":
+			_anim_player.play("player_slip_getup", 0.12)
+		_cur_clip = "player_slip_getup"
 		return
 	var horizontal_speed := Vector2(velocity.x, velocity.z).length()
 	var want := "idle"

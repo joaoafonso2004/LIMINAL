@@ -24,6 +24,8 @@ var _status: Label = null
 var _rules_preset: OptionButton = null
 var _modifier_menu: MenuButton = null
 var _custom_rules: Dictionary = {}
+var _start_match_button: Button = null
+var _match_start_scheduled := false
 
 
 func _ready() -> void:
@@ -242,6 +244,12 @@ func _build_mp_column() -> void:
 		_status.add_theme_font_override("font", _font)
 	_mp_col.add_child(_status)
 
+	_start_match_button = _make_art_button("START MATCH NOW", 370.0)
+	_start_match_button.custom_minimum_size.y = 48.0
+	_start_match_button.visible = false
+	_start_match_button.pressed.connect(_on_start_match_now)
+	_mp_col.add_child(_start_match_button)
+
 	var back := _make_art_button("BACK", 160.0)
 	back.custom_minimum_size.y = 48.0
 	back.pressed.connect(_on_mp_back)
@@ -305,6 +313,10 @@ func _on_host(player_count: int) -> void:
 func _connect_lobby_signals() -> void:
 	if not NetManager.room_created.is_connected(_on_room_created):
 		NetManager.room_created.connect(_on_room_created)
+	if not NetManager.connected_to_room.is_connected(_on_connected_to_room):
+		NetManager.connected_to_room.connect(_on_connected_to_room)
+	if not NetManager.lobby_count_changed.is_connected(_on_lobby_count_changed):
+		NetManager.lobby_count_changed.connect(_on_lobby_count_changed)
 	if not NetManager.player_joined.is_connected(_on_player_joined):
 		NetManager.player_joined.connect(_on_player_joined)
 	if not NetManager.room_error.is_connected(_on_room_error):
@@ -314,8 +326,10 @@ func _connect_lobby_signals() -> void:
 	if not NetManager.message_received.is_connected(_on_lobby_net_message):
 		NetManager.message_received.connect(_on_lobby_net_message)
 
-func _on_lobby_net_message(type: String, _msg: Dictionary, _from_player: int) -> void:
+func _on_lobby_net_message(type: String, msg: Dictionary, _from_player: int) -> void:
 	if type == "start_game":
+		NetManager.max_players = clampi(
+			int(msg.get("player_count", NetManager.connected_players)), 2, 4)
 		_on_all_players_joined()
 
 
@@ -324,11 +338,38 @@ func _on_room_error(reason: String) -> void:
 	_set_status(reason + "\nTry again — or descend alone.")
 
 
+func _on_connected_to_room() -> void:
+	if NetManager.is_host:
+		return
+	_set_status(
+		"Connected to room " + NetManager.room_code + ".\n"
+		+ "Waiting for the remaining players…\n"
+		+ "The match starts when the room is full.")
+
+
 func _on_room_created(code: String) -> void:
 	_set_status("Room code:  " + code + "\nWaiting for friends… (starts when the room is full)\nPlayers: 1 / " + str(NetManager.max_players))
 
 
+func _on_lobby_count_changed(total: int, capacity: int) -> void:
+	if _match_start_scheduled:
+		return
+	if NetManager.is_host:
+		_set_status(
+			"Room code:  " + NetManager.room_code
+			+ "\nWaiting for friends… (starts when the room is full)"
+			+ "\nPlayers: " + str(total) + " / " + str(capacity))
+	else:
+		_set_status(
+			"Connected to room " + NetManager.room_code + "."
+			+ "\nWaiting for the remaining players…"
+			+ "\nPlayers: " + str(total) + " / " + str(capacity))
+
+
 func _on_player_joined(pid: int, total: int) -> void:
+	if is_instance_valid(_start_match_button):
+		_start_match_button.visible = NetManager.is_host and total >= 2 \
+			and total < NetManager.max_players
 	if NetManager.is_host:
 		if total > 1:
 			_set_status("Room code:  " + NetManager.room_code + "\n[!] A new player joined the session!\nTotal players in session: " + str(total) + " / " + str(NetManager.max_players))
@@ -345,11 +386,25 @@ func _on_player_joined(pid: int, total: int) -> void:
 			AudioManager.play_sfx(chime, -2.0, 1.0)
 
 
+func _on_start_match_now() -> void:
+	if not NetManager.is_host or NetManager.connected_players < 2:
+		return
+	NetManager.max_players = clampi(NetManager.connected_players, 2, 4)
+	_on_all_players_joined()
+
+
 func _on_all_players_joined() -> void:
+	if _match_start_scheduled:
+		return
+	_match_start_scheduled = true
+	if is_instance_valid(_start_match_button):
+		_start_match_button.disabled = true
 	_set_status("Everyone's in! Descending into the Backrooms…")
 	if NetManager.is_host:
 		NetManager.send("rules", {"rules": NetManager.run_rules})
-		NetManager.send("start_game", {})
+		NetManager.send("start_game", {
+			"player_count": clampi(NetManager.connected_players, 2, 4),
+		})
 	get_tree().create_timer(0.6).timeout.connect(_start_game)
 
 func _on_rules_preset_selected(index: int) -> void:

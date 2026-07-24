@@ -418,6 +418,7 @@ const SURVIVOR_CLIP_SOURCES := {
 	"crouch_to_standing": "res://assets/characters/survivor_body/crouch_to_standing.fbx",
 	"lean_left": "res://assets/characters/survivor_body/lean_left.fbx",
 	"lean_right": "res://assets/characters/survivor_body/lean_right.fbx",
+	"player_slip_getup": "res://assets/characters/entity/player_slip_getup.fbx",
 }
 
 ## Some Blender FBX exports contain the other actor's actions as extra takes.

@@ -3377,3 +3377,1070 @@ Identificados **dois problemas críticos encadeados** em `scripts/world/entity_d
 - Verificação via CLI Godot 4.6.1: 0 erros GDScript.
 - Exportação da build release em `build/LIMINAL.exe` concluída com sucesso.
 
+## Edição CX-2026-07-24-66 — Recuperação Integral após o Commit 5bcc6f5 e Reimplementação Segura das Funcionalidades Revertidas
+
+### Pedido do Utilizador
+
+- Analisar cuidadosamente o projeto após alterações mal sucedidas de outro AI.
+- Corrigir o erro `Expected indented block after function declaration` da captura de ecrã.
+- Validar animações, jogador, Entity, multiplayer, geração procedural e todas as funções relevantes.
+- Corrigir as funcionalidades ainda presentes no commit `5bcc6f5`.
+- Reimplementar as funcionalidades que tinham sido revertidas ao recuar de `c041b52` para `5bcc6f5`.
+- Registar todas as alterações no changelog para permitir localizar e reverter futuros bugs.
+
+### Causa do erro que impedia o jogo de arrancar
+
+- Em `world_content_manager.gd`, a declaração de `_spawn_breaker()` tinha ficado imediatamente seguida por `_spawn_pamphlets()`, sem corpo indentado.
+- A alteração defeituosa também tinha apagado toda a construção do quadro de energia e removido a chamada que o fazia aparecer. Não foi colocado apenas um `pass`: a implementação funcional anterior foi recuperada, adaptada e testada.
+- O quadro `OptionalPowerBreaker` volta a:
+  - nascer montado na parede;
+  - apresentar `AUX POWER / OFFLINE`;
+  - aceitar a interação contínua;
+  - restaurar a energia da zona;
+  - mudar visualmente para `AUX POWER / RESTORED`.
+
+### Mecânica Wet Floor corrigida
+
+- A poça visual e a colisão usam agora o mesmo raio real de **3.5 m**.
+- O impulso calculado para o jogador era guardado mas nunca aplicado à velocidade. O escorregão passa a aplicar realmente **7.5 m/s** no plano horizontal.
+- A câmara passa a cair até perto do chão e a recuperar; anteriormente era alterada uma variável local depois da interpolação e o efeito não chegava à câmara.
+- Headbob, pitch e animação deixam de substituir o estado do escorregão a cada frame.
+- `player_slip_getup.fbx` foi incluído na biblioteca retargeted e o estado `sl` é replicado para os outros jogadores.
+- A Entity usa `entity_slip_getup.fbx`, permanece incapacitada durante **2.0 s** independentemente da duração original do FBX e recupera velocidade/pose sem afundar o modelo.
+- Foi removida a mensagem de rede órfã `entity_slip`, que não tinha recetor e podia contribuir para comportamentos divergentes. O estado molhado segue agora nos snapshots da única Entity.
+- Foi acrescentada imunidade curta e rearme por saída da poça, impedindo escorregões repetidos todos os frames.
+- Os falsos efeitos de “poça” que reutilizavam o buzz das lâmpadas foram substituídos por impactos discretos de passos.
+
+### Animações e poses do jogador/Entity
+
+- Auditadas **29 animações do jogador** e **11 animações da nova Entity**; nenhuma animação obrigatória ficou em falta.
+- Confirmadas as animações direcionais, crouch, ataque/comer, revive, downed, crawl e escorregão.
+- Medida a altura efetiva dos ossos mais baixos durante:
+  - `downed`;
+  - `crawl_down`;
+  - `player_eaten_start`;
+  - `player_eaten_loop`;
+  - `player_eaten_death`.
+- Todas ficaram aproximadamente **0.05 m acima do plano local**, dentro da margem de contacto com o chão, sem flutuação nem enterramento.
+- A câmara downed permaneceu estável durante 120 atualizações consecutivas e o escorregão passou a ser dono exclusivo da câmara enquanto decorre.
+
+### Multiplayer, Entity e espetador
+
+- Confirmada a existência de uma única Entity física partilhada, com a representação visual remota alimentada pelos snapshots normais.
+- Corrigida a reação a gritos: em multiplayer, apenas o host altera a lógica autoritativa da Entity. O cliente já não executa uma segunda investigação local.
+- Adicionada proteção contra eco do próprio grito recebido pela rede.
+- Confirmado que o streaming do labirinto acompanha a posição do colega observado através de `set_stream_focus`, incluindo adereços, notas, botões e porta.
+- Telefones mantêm o fluxo autoritativo `phone_request`/`phone_used`, com validação de distância no host e reprodução sincronizada nos restantes jogadores.
+- A Entity molhada replica a animação de queda sem criar nem comandar uma segunda Entity.
+
+### Bleedout, revive, botões e porta
+
+- O fallback de bleedout Normal foi corrigido de **30 s para 90 s**.
+- Confirmado que o temporizador fica pausado enquanto chegam atualizações de revive e volta a contar quando o revive é interrompido.
+- Confirmado que a barra de revive é apresentada tanto ao jogador que revive como ao jogador no chão.
+- Botões de emergência validados com colisão local e montagem na parede:
+  - solo: 1 botão;
+  - co-op: 2 botões;
+  - os dois botões co-op aparecem próximos (cerca de 10 m no teste), mas não sobrepostos.
+- Confirmado que a porta física é criada proceduralmente desde o início, numa célula aleatória da borda determinada pela seed da partida, permanecendo selada até aos objetivos.
+
+### Cinco notas procedurais
+
+- Mantida a regra exata de **5 notas: 2 fotografias + 3 textos**.
+- Substituído `Array.shuffle()` por Fisher–Yates com o `RandomNumberGenerator` da partida. Host, clientes e espetador passam a selecionar os mesmos conteúdos e localizações com a mesma seed.
+- Se uma montagem na parede falhar numa configuração procedural rara, a nota passa para o chão da mesma célula em vez de desaparecer; deixa de ser possível terminar com menos de cinco.
+
+### VCR OSD, CRT e som de fita
+
+- Recuperados os recursos:
+  - `assets/fonts/vcr_osd_mono.ttf`;
+  - `assets/audio/sfx/environment/VHS_sound.mp3`.
+- Restaurado o timestamp de duas linhas `18:00 / JAN. 02 2004` no canto superior direito.
+- Corrigido um bug independente do overlay: `EndingText` era criado dentro de `set_chase_vignette()`, podendo duplicar e não existir antes da primeira perseguição. Passa a existir exatamente uma vez desde `_ready()`.
+- Adicionado um twitch CRT raro e curto através de deslocamento UV, acompanhado por hiss baixo. Não altera a resolução nem reintroduz o filtro pixelizado anteriormente rejeitado.
+- Restaurado um loop VHS muito discreto, integrado no ducking do ambiente.
+- Confirmado que a câmara existente já conserva as três camadas avançadas:
+  - headbob Lissajous/figura 8;
+  - mola amortecida com impulso no calcanhar;
+  - microtremores Perlin não repetitivos;
+  - perfis próprios de walk, run e crouch e sway de viragem.
+  Não foi adicionada uma segunda camada concorrente que pudesse voltar a causar flicker.
+
+### Respiração processada
+
+- Recuperados `breathing_normal.mp3` e `breathing_heavy.mp3`.
+- Criado o bus dedicado `Breathing`, encaminhado para SFX, com:
+  - high-pass a 300 Hz;
+  - low-pass a 4000 Hz;
+  - compressor 8:1.
+- Adicionados loops normal/pesado com crossfade por sprint, exaustão, downed e estado de pânico.
+- A respiração é silenciada quando o jogador prende a respiração, morre ou o estado exige silêncio.
+
+### Chat de voz e remapeamento de teclas
+
+- Adicionado `VoiceChat` como autoload.
+- Captura de microfone iniciada apenas durante multiplayer e quando a voz não está desligada.
+- Áudio convertido para PCM16 mono a 12 kHz, em pacotes curtos, e enviado pelo relay WebSocket existente.
+- Reprodução recebida através de `AudioStreamPlayer3D` anexado ao corpo remoto, com atenuação por proximidade até 18 m.
+- Modos adicionados às opções:
+  - Push-To-Talk;
+  - Always Speaking, com limiar e hangover;
+  - Off.
+- Adicionados nove remapeamentos persistentes: movimento, sprint, crouch, interação, grito e PTT.
+- Atribuir uma tecla já ocupada troca as duas ações em vez de deixar uma ação inacessível.
+- Removidos os fallbacks físicos fixos de WASD/Ctrl que anulavam o remapeamento.
+- O ecrã de introdução mostra as teclas atualmente configuradas.
+
+### Lobbies de 3/4 jogadores e início antecipado
+
+- Confirmado e preservado o suporte dinâmico existente para 2, 3 e 4 jogadores no `NetManager` e no spawn de jogadores remotos.
+- Adicionado `START MATCH NOW`, visível apenas ao host quando existem pelo menos dois jogadores e a sala ainda não encheu.
+- O número real de participantes é enviado no `start_game` e aplicado nos clientes.
+- Adicionada proteção contra arranque duplicado da mesma partida.
+
+### Compatibilidade Godot 4 encontrada durante a auditoria
+
+- Corrigidas propriedades de luz inválidas em salas especiais e no televisor:
+  - `color` → `light_color`;
+  - `energy` → `light_energy`.
+- Eliminados assim erros runtime que só surgiam quando esses elementos eram construídos.
+
+### Ficheiros principais alterados
+
+- `project.godot`
+- `scripts/autoloads/audio_manager.gd`
+- `scripts/autoloads/settings.gd`
+- `scripts/autoloads/voice_chat.gd`
+- `scripts/main_menu.gd`
+- `scripts/player/player_controller.gd`
+- `scripts/ui/options_panel.gd`
+- `scripts/ui/overlay.gd`
+- `scripts/utils/model_utils.gd`
+- `scripts/world/entity_director.gd`
+- `scripts/world/game_world.gd`
+- `scripts/world/maze_manager.gd`
+- `scripts/world/remote_player.gd`
+- `scripts/world/vhs_tv_controller.gd`
+- `scripts/world/world_content_manager.gd`
+- `assets/shaders/post_crt_old_tv.gdshader`
+- Recursos de fonte/áudio listados acima e respetivos imports gerados pelo Godot.
+
+### Validação automatizada efetuada
+
+- Godot 4.3 headless editor: projeto carregado sem erros GDScript ou parse.
+- Cena completa `game_world.tscn`: executada sem erros runtime de script.
+- `git diff --check`: sem erros de whitespace.
+- Resultado do teste funcional temporário, removido depois da execução:
+  - jogador: `total=29`, `missing=[]`;
+  - Entity: `new=true`, `total=11`, `missing=[]`;
+  - cinco poses de chão: todas dentro da margem, `ok=true`;
+  - notas: `total=5`, `photos=2`, `texts=3`;
+  - breaker: `spawned=true`, `restored=true`;
+  - overlay: um `EndingText` e um `VCRTimestamp`;
+  - jogador molhado: `speed=7.5`, animação correta e queda real da câmara;
+  - câmara downed: `stable=true`;
+  - Entity molhada: `timer=2`, animação correta;
+  - raio molhado: `3.5`;
+  - emergência: solo 1, co-op 2, colisões presentes;
+  - espetador: `focus_ok=true`;
+  - porta: `placed=true`, célula e posição não nulas;
+  - bleedout: `paused=true`, `resumed=true`;
+  - áudio: três efeitos no bus Breathing e bus VoiceCapture presente;
+  - opções: nove remapeamentos e três modos de voz;
+  - resultado final: `CODEX_VALIDATION_OK`.
+
+### Limite da validação automática / teste manual necessário
+
+- O relay, dois a quatro executáveis reais, permissões de microfone e dispositivos de áudio físicos não podem ser integralmente simulados no modo headless. Devem ser testados com duas máquinas/janelas reais.
+- A colocação visual fina de poças, botões, notas, timestamp, intensidade do twitch e volumes deve ser avaliada durante o playtest, embora dimensões, colisões e estados tenham sido validados por código.
+- Os avisos `mesh_get_surface_count: Parameter "m" is null` vistos apenas no renderer dummy headless não têm stack `res://` e não aparecem como erros de GDScript; são uma limitação do renderer sem GPU, não uma falha de gameplay.
+
+### Tags
+
+`CX66-FULL-RECOVERY-AUDIT`, `CX66-PARSE-AND-BREAKER-RESTORE`,
+`CX66-WET-FLOOR-PLAYER-ENTITY`, `CX66-ANIMATION-GROUNDING-VALIDATION`,
+`CX66-SPECTATOR-AND-MP-AUTHORITY`, `CX66-90S-BLEEDOUT`,
+`CX66-DETERMINISTIC-FIVE-NOTES`, `CX66-VCR-OSD-AND-TWITCH`,
+`CX66-PROCESSED-BREATHING`, `CX66-PROXIMITY-VOICE`,
+`CX66-KEY-REMAPPING`, `CX66-THREE-FOUR-PLAYER-LOBBIES`.
+
+## Edição CX-2026-07-24-67 — Escorregões Seguros, Remoção do AUX POWER e Reforço dos Botões/Telefones
+
+### Pedido do Utilizador
+
+- Confirmar que o jogador e a Entity não entram em paredes quando escorregam.
+- Rever cuidadosamente a implementação do Wet Floor e melhorá-la.
+- Remover o sistema AUX POWER.
+- Dar mais importância, legibilidade e feedback aos botões de emergência.
+- Dar uma utilidade clara aos telefones.
+
+### Escorregão do jogador contra paredes
+
+- Confirmado que o jogador é um `CharacterBody3D`, com máscara de colisão do ambiente, e que todo o impulso passa por `move_and_slide()`. O movimento usa portanto uma varredura física, não uma alteração direta de `global_position`.
+- Adicionado um `test_move()` preventivo de 0.55 m:
+  - se o jogador já estiver praticamente encostado a uma parede na direção da queda, o impulso é reduzido antes do primeiro frame;
+  - a animação e a queda de câmara continuam, mas o corpo não é projetado contra a parede.
+- Depois de `move_and_slide()`, as colisões são inspecionadas:
+  - colisões com o chão são ignoradas;
+  - uma normal maioritariamente horizontal identifica parede ou adereço sólido;
+  - a velocidade horizontal do escorregão é imediatamente anulada.
+- Isto conserva o deslize nos espaços abertos e impede pressão repetida da cápsula/modelo contra uma superfície.
+
+### Escorregão da Entity contra paredes
+
+- Confirmado que a Entity não se desloca globalmente durante os 2 segundos de queda: `_tick_chase()` regressa antes de executar `_chase_move()`.
+- O problema possível era visual: a animação ajoelhada é mais larga que a cápsula vertical de navegação e podia atravessar visualmente uma parede próxima.
+- Adicionada uma cápsula temporária de reserva para a animação, com raio de 0.62 m.
+- Antes de tocar `entity_slip_getup`, a Entity:
+  - verifica o espaço largo da queda;
+  - se necessário, procura o menor afastamento seguro entre 0.25 e 0.75 m;
+  - testa a faixa completa entre origem e destino;
+  - nunca atravessa uma parede para chegar ao ponto corrigido.
+- Corrigido durante esta auditoria um bug multiplayer adicional:
+  - `living_remote_player_bodies()` devolve um `Dictionary`;
+  - as consultas de cápsula tentavam convertê-lo diretamente para `Array`;
+  - passam agora a usar corretamente os valores/corpos remotos como exclusões da consulta física.
+
+### AUX POWER removido
+
+- Removidos integralmente:
+  - `OptionalPowerBreaker`;
+  - constantes, variáveis, progresso e prompt;
+  - sinal `power_restored`;
+  - restauração local/remota;
+  - conexão em `game_world.gd`;
+  - mensagem de rede `aux_power`;
+  - reação da Entity e feedback associado.
+- Esta remoção substitui intencionalmente a recuperação do breaker feita na CX66, por pedido explícito do utilizador.
+- Não ficaram referências ativas a `aux_power`, `_breaker`, `power_restored`, `remote_restore_power` ou `phone_chase`.
+
+### Botões de emergência melhorados
+
+- Tempo de pressão reduzido de 6 para **4 segundos**, mantendo a barra de conclusão.
+- Cada botão recebe uma identificação física discreta na parede:
+  - `EMERGENCY OVERRIDE 01`;
+  - `EMERGENCY OVERRIDE 02`.
+- Luz vermelha pulsante enquanto está desarmado e luz verde estável depois da ativação.
+- Som 3D de confirmação reproduzido em todos os peers, incluindo ativações remotas.
+- Depois do primeiro botão co-op:
+  - aparece um HUD persistente com `SECOND EMERGENCY BUTTON — 45s`;
+  - a barra representa o tempo restante;
+  - a cor passa gradualmente de âmbar para vermelho;
+  - o HUD continua visível mesmo depois de o jogador se afastar do primeiro botão.
+- A missão apresenta também a contagem e o tempo inicial.
+- Ativar um botão gera um alarme físico:
+  - apenas o host altera a Entity;
+  - a Entity investiga a posição do botão;
+  - não recebe lock-on ao jogador que o ativou;
+  - ataca o primeiro jogador que realmente encontrar;
+  - as luzes fazem um flicker curto para dar peso ao evento.
+- Foram expostos métodos seguros para obter posições dos botões e localizar o botão desarmado mais próximo.
+
+### Telefones transformados em risco/recompensa
+
+- Quantidade reduzida de 6 para **4 telefones** por mapa para diminuir ruído visual e tornar cada chamada relevante.
+- Probabilidade Normal de armadilha ajustada de 30% para **22%**.
+- Uma chamada segura produz quatro pulsos de áudio 3D que apontam contextualmente para:
+  1. o SNUS não recolhido mais próximo;
+  2. o botão de emergência desarmado mais próximo;
+  3. a porta de saída depois dos botões.
+- O HUD explica o resultado: `THE LINE POINTS TO ... — LISTEN`.
+- Uma chamada armadilhada mostra `THE LINE HEARD YOU` e produz um som real na posição do telefone.
+- Corrigida a autoridade da armadilha:
+  - o comportamento anterior iniciava `phone_chase()` no cliente-alvo;
+  - esse caminho foi removido;
+  - agora só o host manda a Entity investigar o telefone;
+  - a Entity segue o som e ataca o primeiro jogador que os seus olhos encontrarem.
+- Mantido o fluxo sincronizado `phone_request`/`phone_used` e a validação de distância no host.
+
+### Validação automatizada efetuada
+
+- Godot 4.3 headless editor: sem erros de parsing/GDScript.
+- Teste físico temporário CX67, removido depois da execução:
+  - AUX encontrado: `0`;
+  - telefones procedurais: `4`;
+  - botões co-op: `2`;
+  - labels físicas: `2`;
+  - colisões: `2`;
+  - contador persistente: `true`, `45 s`;
+  - parede artificial colocada a 0.72 m do jogador;
+  - deslocamento do escorregão contra a parede: `0.20059 m`;
+  - jogador fora da parede: `true`;
+  - Entity junto à parede corrigida apenas `0.25 m`;
+  - cápsula normal da Entity livre: `true`;
+  - espaço largo da animação livre: `true`;
+  - duração da queda: `2.0 s`;
+  - telefone após os SNUS apontou para `THE NEXT EMERGENCY BUTTON`;
+  - resultado: `CX67_VALIDATION_OK`.
+- `git diff --check`: sem erros de whitespace.
+
+### Ficheiros alterados nesta edição
+
+- `scripts/player/player_controller.gd`
+- `scripts/tuning.gd`
+- `scripts/world/entity_director.gd`
+- `scripts/world/extraction_manager.gd`
+- `scripts/world/game_world.gd`
+- `scripts/world/world_content_manager.gd`
+- `docs/CODEX_EDIT_LOG.md`
+
+### Tags
+
+`CX67-SLIP-WALL-SWEEP`, `CX67-ENTITY-STUMBLE-CLEARANCE`,
+`CX67-REMOTE-BODY-PHYSICS-FIX`, `CX67-REMOVE-AUX-POWER`,
+`CX67-EMERGENCY-BUTTON-OBJECTIVE`, `CX67-PERSISTENT-COOP-COUNTDOWN`,
+`CX67-HOST-AUTHORITATIVE-ALARMS`, `CX67-PHONE-GUIDANCE-RISK-REWARD`.
+
+## Edição CX-2026-07-24-68 — Timestamp VCR Fiel e Entrada em Salas de 3/4 Jogadores
+
+### Pedido do Utilizador
+
+- Colocar o relógio/data na mesma posição da imagem de referência, sem o
+  encostar ao canto.
+- Usar a mesma estética de fonte VCR.
+- Começar em `18:00` e `JAN. 02 2004`, com um relógio que avance realmente.
+- Confirmar e corrigir as salas de 3 e 4 jogadores que aparentavam ficar
+  indefinidamente em `Joining room…`.
+
+### Timestamp VCR
+
+- O HUD usa explicitamente `assets/fonts/vcr_osd_mono.ttf`.
+- A composição foi medida pela referência:
+  - margem esquerda de 10% da imagem;
+  - base do bloco a 12% acima do fundo;
+  - alinhamento à esquerda e vertical pela base;
+  - tamanho 30, cor branco envelhecido, sombra e contorno escuros.
+- O início de cada partida é fixo em:
+  - `18:00`;
+  - `JAN. 02 2004`.
+- O tempo gravado acumula os segundos reais da partida e atualiza o texto uma
+  vez por segundo.
+- A conversão usa o calendário do Godot; minutos, horas, dias, meses e anos
+  transitam corretamente, incluindo a passagem para `JAN. 03 2004`.
+
+### Diagnóstico e correção dos lobbies de 3/4 jogadores
+
+- Confirmado diretamente no relay público que a capacidade de 3 e 4 funciona.
+- Identificado o motivo do falso bloqueio:
+  - o relay abre imediatamente o WebSocket;
+  - numa sala de 3 ou 4, não envia `joined` nem contagens parciais;
+  - só confirma todos os peers quando a sala atinge exatamente 3/3 ou 4/4.
+- O cliente permanecia por isso visualmente em `Joining room…`, embora a
+  ligação já estivesse aberta e saudável.
+- `NetManager` passa a emitir `connected_to_room` assim que o WebSocket abre.
+- O menu mostra agora:
+  - ligação confirmada à sala;
+  - espera pelos restantes jogadores;
+  - indicação de que a partida começa quando a sala estiver cheia.
+- Como o relay omite `max_players` no pacote final, os clientes inferem a
+  capacidade autoritativa a partir de `total` nesse momento. Isto impede um
+  cliente de uma sala 3/4 de continuar internamente configurado como 2P.
+- O fecho de uma sala cheia (`4002`) apresenta agora uma mensagem específica,
+  em vez de o confundir com um código inválido.
+- Estados de ligação, ping, timeout e confirmação são totalmente limpos ao
+  sair de uma sala ou tentar uma nova ligação.
+
+### Compatibilidade do mundo com 3/4 jogadores
+
+- Auditado `game_world.gd`:
+  - cria um corpo remoto para todos os IDs em
+    `range(NetManager.connected_players)`;
+  - ignora apenas o ID local;
+  - posicionamento inicial suporta quatro offsets/setores;
+  - listas de jogadores vivos, downed, revive, espectador e mensagens usam
+    IDs/dicionários dinâmicos, sem um par fixo host/cliente.
+
+### Validação efetuada
+
+- Godot 4.3 headless editor: sem erros de parsing/GDScript.
+- Teste funcional temporário do timestamp, removido após execução:
+  - início: `18:00 | JAN. 02 2004`;
+  - anchors: `0.10` à esquerda e `0.88` na vertical;
+  - fonte carregada: `res://assets/fonts/vcr_osd_mono.ttf`;
+  - após 60 segundos: `18:01 | JAN. 02 2004`;
+  - após 6 horas: `00:00 | JAN. 03 2004`.
+- Teste real temporário ao relay público, removido após execução:
+  - sala 3P: IDs `0,1,2`, todos com `total=3`;
+  - sala 4P: IDs `0,1,2,3`, todos com `total=4`.
+
+### Ficheiros alterados nesta edição
+
+- `scripts/ui/overlay.gd`
+- `scripts/autoloads/net_manager.gd`
+- `scripts/main_menu.gd`
+- `docs/CODEX_EDIT_LOG.md`
+
+### Tags
+
+`CX68-VCR-REFERENCE-PLACEMENT`, `CX68-VCR-RUN-TIMER`,
+`CX68-RELAY-WAITING-STATE`, `CX68-3P-4P-CAPACITY-SYNC`,
+`CX68-ROOM-FULL-ERROR`.
+
+## Edição CX-2026-07-24-69 — Máquina de Estados da Respiração
+
+### Pedido do Utilizador
+
+- Gerir `breathing_normal`, `breathing_heavy` e `breathing_exhausted` através
+  de uma máquina de estados baseada em enum.
+- Reservar `EXHAUSTED` exclusivamente para stamina esgotada depois de sprint.
+- Ativar `HEAVY` quando o jogador é perseguido ou quando o efeito vermelho está
+  ativo, sem duplicar/reiniciar o som quando ambas as condições coexistem.
+- Manter `NORMAL` como estado base.
+- Fazer transições suaves por crossfade.
+- Aplicar ao novo áudio exhausted o mesmo EQ/compressor dos restantes.
+
+### State machine modular
+
+- Criado `scripts/player/breathing_audio_controller.gd`.
+- Estados exclusivos:
+  - `NORMAL`;
+  - `HEAVY`;
+  - `EXHAUSTED`.
+- Prioridade explícita: `EXHAUSTED > HEAVY > NORMAL`.
+- `EXHAUSTED` recebe diretamente o latch `_sprint_exhausted`, que apenas é
+  ativado quando o sprint reduz a stamina a zero e desaparece depois da
+  recuperação integral configurada pelo jogo.
+- `HEAVY` resolve a expressão lógica única:
+  `is_being_chased OR red_effect_active`.
+- Se chase e efeito vermelho estiverem ativos simultaneamente, o estado
+  continua a ser o mesmo enum `HEAVY`; não é criado outro player nem é chamado
+  `play()` novamente.
+
+### Reprodução e crossfade
+
+- Existe exatamente um `AudioStreamPlayer` persistente por estado.
+- Apenas o player do estado de destino começa quando ocorre uma transição.
+- O áudio anterior perde volume enquanto o novo ganha volume, a 42 dB/s.
+- Depois de chegar ao silêncio, o player anterior é parado.
+- Enquanto o estado não muda, o loop nunca recebe `play()` por frame.
+- A única recuperação automática acontece se o stream ativo tiver realmente
+  terminado enquanto o mesmo estado continua.
+- Os MP3 são duplicados em memória com loop ativo; os ficheiros originais não
+  são alterados.
+- A mecânica preexistente de prender a respiração no cacifo e o silêncio após
+  morte foram preservados como mute suave, sem criar estados paralelos.
+
+### Chase e efeito vermelho
+
+- O jogador expõe separadamente:
+  - `is_being_chased`;
+  - `red_effect_active`.
+- `game_world.gd` liga `chase_started`/`chase_ended` ao primeiro valor.
+- O overlay emite `chase_vignette_changed` apenas quando o estado visual muda,
+  alimentando o segundo valor.
+- Isto inclui um colega que vê a luz vermelha por estar no mesmo espaço, mesmo
+  quando não é o alvo real da Entity.
+- Uma captura limpa imediatamente o estado de perseguição.
+
+### EQ e compressão do exhausted
+
+- Os três players usam o mesmo bus `Breathing`.
+- `breathing_exhausted.mp3` recebe assim exatamente a cadeia já configurada
+  pelo `AudioManager`:
+  - high-pass a 300 Hz;
+  - low-pass a 4 kHz;
+  - compressor com threshold -18 dB, ratio 8:1, gain +2 dB,
+    attack 5 ms e release 140 ms.
+- O `.mp3` não foi recomprimido nem editado destrutivamente.
+
+### Validação automatizada efetuada
+
+- Godot importou corretamente `breathing_exhausted.mp3`.
+- Testadas as transições:
+  - início em `NORMAL`;
+  - chase → `HEAVY`;
+  - chase + red → continua no mesmo `HEAVY`;
+  - apenas red → continua em `HEAVY`;
+  - stamina esgotada → `EXHAUSTED`;
+  - stamina recuperada com red → `HEAVY`;
+  - sem condições → `NORMAL`.
+- Confirmado:
+  - exatamente três players;
+  - um único player/instance para heavy;
+  - os três streams em loop no bus `Breathing`;
+  - três efeitos de bus;
+  - compressor com ratio `8.0`;
+  - resultado: `CX69_BREATHING_OK`.
+
+### Ficheiros desta edição
+
+- `scripts/player/breathing_audio_controller.gd`
+- `scripts/player/player_controller.gd`
+- `scripts/ui/overlay.gd`
+- `scripts/world/game_world.gd`
+- `assets/audio/sfx/player/breathing_exhausted.mp3.import`
+- `docs/CODEX_EDIT_LOG.md`
+
+### Tags
+
+`CX69-BREATHING-STATE-MACHINE`, `CX69-CROSSFADE`,
+`CX69-NO-HEAVY-DUPLICATION`, `CX69-SPRINT-EXHAUSTION`,
+`CX69-CHASE-RED-OR`, `CX69-SHARED-EQ-COMPRESSION`.
+
+## Edição CX-2026-07-24-70 — Remapeamento com Botões do Rato
+
+### Pedido do Utilizador
+
+- Permitir que o menu de remapeamento aceite botões do rato, não apenas teclas.
+
+### Alterações
+
+- O painel aceita agora:
+  - `InputEventKey`;
+  - `InputEventMouseButton`.
+- O texto de captura passou de `PRESS A KEY...` para `KEY OR MOUSE...`.
+- O título da secção passou para `KEY / MOUSE BINDINGS`.
+- Apenas eventos de press são capturados:
+  - releases são ignorados;
+  - o clique usado para ativar o botão de remapeamento não se autoatribui;
+  - `Escape` continua a cancelar a operação.
+- Formato de armazenamento retrocompatível:
+  - códigos positivos continuam a representar teclas físicas;
+  - índices de rato são guardados como inteiros negativos;
+  - ficheiros `settings.cfg` antigos continuam válidos.
+- `Settings` converte o valor guardado no tipo correto:
+  - `InputEventKey` para teclado;
+  - `InputEventMouseButton` para rato.
+- Nomes legíveis adicionados para:
+  - Left/Right/Middle Mouse;
+  - Wheel Up/Down/Left/Right;
+  - Mouse 4 e Mouse 5.
+- A deteção de conflitos e troca de binds passa a funcionar igualmente entre
+  teclado e rato.
+
+### Validação automatizada
+
+- Capturado `MOUSE_BUTTON_XBUTTON1` como código `-8`.
+- Texto confirmado: `MOUSE 4`.
+- Confirmado no `InputMap` um único `InputEventMouseButton` com o índice certo.
+- Confirmada troca de bindings ocupados entre Mouse 4 e uma tecla.
+- `options_panel.gd` carregado e instanciável.
+- Resultado: `CX70_MOUSE_BIND_OK`.
+
+### Ficheiros desta edição
+
+- `scripts/autoloads/settings.gd`
+- `scripts/ui/options_panel.gd`
+- `docs/CODEX_EDIT_LOG.md`
+
+### Tags
+
+`CX70-MOUSE-REMAP`, `CX70-BINDING-PERSISTENCE`,
+`CX70-KEY-MOUSE-CONFLICT-SWAP`.
+
+## Edição CX-2026-07-24-71 — CRT Obrigatório e Contagem Parcial do Lobby
+
+### Pedido do Utilizador
+
+- Remover a opção de desligar o CRT, por fazer parte da identidade do jogo.
+- Corrigir o host de uma sala 3P, que continuava a mostrar `1/3` depois de um
+  cliente já apresentar `Connected to room`.
+
+### CRT obrigatório
+
+- Removido o `CheckButton` `CRT FILTER` das opções.
+- `Settings.crt_filter` permanece disponível internamente para compatibilidade
+  com o overlay, mas é sempre inicializado/carregado como `true`.
+- Valores antigos `crt_filter=false` em `user://settings.cfg` são ignorados.
+- Novos saves já não gravam essa opção obsoleta.
+
+### Causa da contagem errada
+
+- O relay público abre e encaminha WebSockets imediatamente, mas retém o pacote
+  oficial `joined` até a sala atingir a capacidade pedida.
+- Numa sala 3P com host + um cliente:
+  - o cliente já estava realmente ligado;
+  - o host ainda não tinha recebido qualquer contagem oficial;
+  - por isso o HUD permanecia honestamente, mas incorretamente, em `1/3`.
+
+### Heartbeat de presença pré-lobby
+
+- Adicionado um canal leve `lobby_presence`, transmitido uma vez por segundo
+  apenas enquanto a sala ainda não recebeu `joined`.
+- Cada processo usa um nonce único; mensagens repetidas atualizam o heartbeat
+  existente e nunca contam o mesmo cliente duas vezes.
+- O host conta a sua própria presença mais os nonces remotos:
+  - host sozinho: `1/3`;
+  - um cliente ligado: `2/3`;
+  - sala completa: `3/3`.
+- O host anuncia também a capacidade. Assim, clientes que inicialmente não
+  conheciam se o código era 2P, 3P ou 4P mostram a contagem correta.
+- `lobby_presence_leave` remove imediatamente uma saída normal.
+- Um timeout de 4 segundos remove ligações abruptamente perdidas.
+- A contagem visual usa `lobby_visible_players` e um novo sinal
+  `lobby_count_changed`; não altera `connected_players`.
+- A partida continua a começar exclusivamente depois do `joined` oficial,
+  quando o relay já atribuiu IDs 0..N. A presença nunca pode iniciar o jogo
+  cedo ou criar jogadores com IDs repetidos.
+
+### Validação efetuada
+
+- Teste real ao relay numa sala 3P incompleta:
+  - host e primeiro cliente trocaram `lobby_presence` antes do terceiro entrar;
+  - comprovado que o canal funciona durante a espera.
+- Teste Godot do contador:
+  - host após um nonce de cliente: `2/3`;
+  - repetição do mesmo nonce: continua `2/3`;
+  - cliente recebeu capacidade do host: `2/3`.
+- Teste de configuração antiga:
+  - valor colocado em `crt_filter=false`;
+  - após `load_settings()`: `crt_filter=true`.
+- Confirmada ausência do controlo `CRT FILTER` no painel.
+- Resultado: `CX71_OK host=2/3 client=2/3 crt=true`.
+
+### Ficheiros desta edição
+
+- `scripts/autoloads/settings.gd`
+- `scripts/ui/options_panel.gd`
+- `scripts/autoloads/net_manager.gd`
+- `scripts/main_menu.gd`
+- `docs/CODEX_EDIT_LOG.md`
+
+### Tags
+
+`CX71-MANDATORY-CRT`, `CX71-LEGACY-CRT-OVERRIDE`,
+`CX71-LOBBY-PRESENCE`, `CX71-PARTIAL-PLAYER-COUNT`,
+`CX71-OFFICIAL-JOIN-GATE`.
+
+## Edição CX-2026-07-24-72 — Respiração Close-Mic e Choque Pós-Perseguição
+
+### Pedido do Utilizador
+
+- Corrigir `breathing_normal`, que não era audível.
+- Tornar toda a respiração muito mais próxima e alta, como um microfone junto
+  à boca do jogador.
+- Prolongar `breathing_heavy` depois da perseguição terminar.
+- Usar `Async Researcher  Async Supervisor breathing sound.mp3` como referência,
+  mas produzir um resultado menos abafado.
+
+### Análise objetiva da referência
+
+- Referência:
+  - duração: 50.78 s;
+  - loudness integrado: aproximadamente -27.7 LUFS;
+  - pico: -4.2 dBFS;
+  - LRA: 1.3 LU, indicando compressão/presença muito constante;
+  - cerca de 98% da energia ativa medida abaixo de 120 Hz.
+- Clips do jogo antes do processamento:
+  - normal: -49.8 LUFS;
+  - heavy: -29.3 LUFS;
+  - exhausted: -26.3 LUFS.
+- A causa do NORMAL “não tocar” era volume, não ausência de reprodução:
+  - fonte a -49.8 LUFS;
+  - player a -31 dB;
+  - resultado aproximado antes do bus: -80.8 dB, praticamente silêncio.
+- O antigo high-pass a 300 Hz removia precisamente a região que dá à referência
+  a sensação física de boca/peito junto do microfone.
+
+### Volumes calibrados por fonte
+
+- Targets dos três players:
+  - NORMAL: +18 dB, compensando a gravação extremamente baixa;
+  - HEAVY: +2 dB;
+  - EXHAUSTED: 0 dB.
+- Os valores aproximam os três clips da intensidade percebida da referência,
+  sem aplicar o mesmo ganho indiscriminadamente e provocar clipping.
+- Crossfade acelerado de 42 para 54 dB/s para suportar o novo intervalo de
+  volumes mantendo transições suaves.
+
+### Som close-mic menos abafado
+
+- Cadeia `Breathing` alterada:
+  - high-pass: 300 Hz → 65 Hz;
+  - low-pass: 4 kHz → 10 kHz;
+  - compressor: threshold -24 dB, ratio 6:1, gain +4 dB;
+  - attack 3.5 ms e release 170 ms.
+- Resultado pretendido:
+  - preserva pressão e corpo nos graves;
+  - conserva ar, saliva e textura de boca nos médios/agudos;
+  - continua comprimido e intrusivo;
+  - evita copiar o abafamento extremo da referência.
+- A referência foi usada apenas para medição/calibração; não substitui nenhum
+  loop e não aumenta o tamanho runtime do sistema.
+
+### Choque depois da perseguição
+
+- `HEAVY_SHOCK_HOLD_SECONDS = 8.0`.
+- Chase ou efeito vermelho renovam um único temporizador de choque.
+- Depois de ambas as condições terminarem:
+  - HEAVY continua sem reiniciar durante 8 segundos;
+  - só depois faz crossfade para NORMAL.
+- Chase + vermelho continuam a usar a mesma instância HEAVY.
+- EXHAUSTED mantém prioridade caso a stamina chegue a zero.
+
+### Validação automatizada
+
+- NORMAL confirmou:
+  - estado inicial correto;
+  - stream em reprodução;
+  - target atingido em +18 dB.
+- HEAVY confirmou:
+  - mesma instância durante chase + vermelho;
+  - target +2 dB;
+  - permanece após 7.9 s sem perigo;
+  - regressa a NORMAL depois de ultrapassar 8 s.
+- EXHAUSTED continua a ativar corretamente.
+- AudioServer confirmou:
+  - high-pass 65 Hz;
+  - low-pass 10 kHz;
+  - compressor threshold -24 dB, ratio 6:1 e gain +4 dB.
+- Resultado: `CX72_OK`.
+
+### Ficheiros desta edição
+
+- `scripts/player/breathing_audio_controller.gd`
+- `scripts/autoloads/audio_manager.gd`
+- `docs/CODEX_EDIT_LOG.md`
+
+### Tags
+
+`CX72-NORMAL-AUDIBILITY`, `CX72-CLOSE-MIC-BREATHING`,
+`CX72-POST-CHASE-SHOCK`, `CX72-REFERENCE-MATCH`,
+`CX72-LESS-MUFFLED-EQ`.
+
+## Edição CX-2026-07-24-73 — Loudness Uniforme entre Respirações
+
+### Pedido do Utilizador
+
+- Equalizar NORMAL, HEAVY e EXHAUSTED para não haver saltos estranhos de volume
+  durante as transições.
+
+### Alteração
+
+- Aplicada compensação individual não destrutiva a partir do loudness medido:
+  - NORMAL, fonte aproximada -49.8 LUFS: gain +23.3 dB;
+  - HEAVY, fonte aproximada -29.3 LUFS: gain +2.8 dB;
+  - EXHAUSTED, fonte aproximada -26.3 LUFS: gain -0.2 dB.
+- Os três estados chegam agora ao bus `Breathing` perto de -26.5 LUFS antes da
+  cadeia comum de EQ/compressão.
+- Os ficheiros MP3 originais não foram regravados nem recomprimidos.
+- Crossfades, choque HEAVY de 8 segundos e prioridade EXHAUSTED permanecem
+  inalterados.
+
+### Validação automatizada
+
+- Godot confirmou os targets +23.3 / +2.8 / -0.2 dB.
+- Loudness efetivo calculado para cada estado:
+  - NORMAL: -26.5 LUFS;
+  - HEAVY: -26.5 LUFS;
+  - EXHAUSTED: -26.5 LUFS.
+- Resultado: `CX73_OK effective_lufs=-26.5/-26.5/-26.5`.
+
+### Ficheiros desta edição
+
+- `scripts/player/breathing_audio_controller.gd`
+- `docs/CODEX_EDIT_LOG.md`
+
+### Tags
+
+`CX73-BREATHING-LOUDNESS-MATCH`, `CX73-NON-DESTRUCTIVE-GAIN`.
+
+## Edição CX-2026-07-24-74 — Respiração de Sprint
+
+### Pedido do Utilizador
+
+- Integrar `breathing_running.mp3` durante o sprint.
+- Garantir uma transição natural se o jogador parar e voltar rapidamente a
+  correr, sem cortes nem reinícios audíveis.
+
+### Análise do Áudio
+
+- Duração: aproximadamente 43.19 segundos.
+- Loudness de origem: aproximadamente -40.6 LUFS.
+- O início e o fim contêm silêncio digital, pelo que a união do loop é limpa e
+  não apresenta um salto de waveform suscetível de criar clique.
+- O intervalo total de cerca de 1 segundo entre ciclos funciona como uma pausa
+  respiratória natural.
+- O MP3 original foi preservado sem recompressão.
+
+### Alteração
+
+- A máquina de estados passou a ter quatro estados:
+  `NORMAL`, `SPRINT`, `HEAVY` e `EXHAUSTED`.
+- `SPRINT` usa `breathing_running.mp3` em loop.
+- Aplicado gain não destrutivo de +14.1 dB, colocando o novo áudio perto do
+  mesmo alvo dos restantes estados: -26.5 LUFS antes do bus `Breathing`.
+- Ordem de prioridade:
+  `EXHAUSTED > HEAVY > SPRINT > NORMAL`.
+- Ao deixar de correr, o estado SPRINT mantém uma recuperação de 4 segundos e
+  mistura progressivamente a respiração de corrida com NORMAL através de um
+  crossfade equal-power.
+- Se o jogador voltar a correr durante essa recuperação:
+  - a mesma instância de áudio continua;
+  - o clip não volta ao início;
+  - a mistura regressa suavemente à respiração de corrida.
+- A velocidade geral de crossfade foi ajustada para 100 dB/s, mantendo entradas
+  rápidas sem cortes secos.
+- O estado HEAVY e o choque pós-perseguição continuam a sobrepor-se ao sprint.
+- EXHAUSTED continua com prioridade máxima quando a stamina chega a zero.
+
+### Validação Automatizada
+
+- Godot confirmou:
+  - entrada correta em SPRINT;
+  - stream de corrida em reprodução e loop;
+  - target de +14.1 dB;
+  - recuperação de 4 segundos;
+  - mistura simultânea NORMAL/SPRINT durante a recuperação;
+  - reutilização da mesma instância ao voltar a correr;
+  - prioridades HEAVY e EXHAUSTED;
+  - loudness efetivo de -26.5 LUFS nos quatro estados.
+- Resultado:
+  `CX74_OK sprint_db=14.1 recovery=4.0 same_instance=true`.
+
+### Ficheiros desta Edição
+
+- `scripts/player/breathing_audio_controller.gd`
+- `scripts/player/player_controller.gd`
+- `assets/audio/sfx/player/breathing_running.mp3.import`
+- `docs/CODEX_EDIT_LOG.md`
+
+### Tags
+
+`CX74-SPRINT-BREATHING`, `CX74-REVERSIBLE-RECOVERY`,
+`CX74-SAME-INSTANCE`, `CX74-RUNNING-LOOP`,
+`CX74-LOUDNESS-MATCH`.
+
+## Edição CX-2026-07-24-75 — Sway Contínuo ao Começar a Andar
+
+### Problema Reportado
+
+- Ao olhar em redor parado e depois carregar W, o sway visível era cancelado e
+  a câmara fazia snap para o padrão de walking.
+
+### Causa
+
+- Idle e locomoção escreviam fórmulas diferentes diretamente na transformação
+  da câmara.
+- A passagem binária para o ramo de walking substituía imediatamente a pose
+  procedural que estava visível.
+- `_prev_bob_cos` era colocado a zero em idle; no primeiro frame de movimento,
+  isso podia ser interpretado como uma passagem de fase e injetar falsamente um
+  impacto de calcanhar.
+
+### Alteração
+
+- O movimento da câmara foi separado em camadas aditivas contínuas:
+  - respiração/idle;
+  - Lissajous de locomoção;
+  - inércia de pescoço ao virar;
+  - impacto de passos;
+  - micro-tremor procedural.
+- A velocidade horizontal controla progressivamente o peso da locomoção, em vez
+  de trocar instantaneamente a transformação da câmara.
+- Idle continua subtilmente presente durante o movimento para evitar uma
+  mudança artificial de padrão.
+- Adicionado um filtro inercial final independente para posição e rotação.
+- O pitch do rato fica fora desse filtro, preservando resposta imediata ao olhar.
+- O primeiro frame a andar apenas inicializa a fase do passo e já não dispara
+  um heel-strike falso.
+- Os estados slip, downed e restauro de primeira pessoa limpam corretamente as
+  novas camadas persistentes.
+
+### Validação Automatizada
+
+- Teste físico real: player sobre colisão de chão, inércia de olhar ativa,
+  seguido de `move_forward`.
+- Primeiro frame reconhecido como walking:
+  - deslocação da câmara: `0.00009 m`;
+  - variação de rotação: `0.00057 rad`;
+  - peso inicial de locomoção: `0.012`;
+  - impulso de calcanhar: `0`.
+- Resultado:
+  `CX75_OK first_walk_delta=0.00009 rotation_delta=0.00057 blend=0.012 heel_velocity=0`.
+
+### Ficheiros desta Edição
+
+- `scripts/player/player_controller.gd`
+- `docs/CODEX_EDIT_LOG.md`
+
+### Tags
+
+`CX75-CONTINUOUS-CAMERA-LAYERS`, `CX75-NO-WALK-SNAP`,
+`CX75-LOOK-INERTIA-PRESERVED`, `CX75-NO-FALSE-HEEL-STRIKE`.
+
+## Edição CX-2026-07-24-76 — Zoom Ótico e Passadas Mais Físicas
+
+### Pedido do Utilizador
+
+- Scroll Up faz zoom in e Scroll Down faz zoom out.
+- Zoom gradual, semelhante ao motor físico de uma lente.
+- Pequeno atraso de autofocus/blur depois de terminar o zoom.
+- Usar `zoom_in.mp3` e `zoom_out.mp3`.
+- O movimento de walk/run deve ser mais forte, sentir cada passada e deixar de
+  parecer um ciclo robótico de um lado para o outro.
+- O movimento do zoom deve durar todo o MP3 e parar no clique final do áudio.
+
+### Zoom de Câmara
+
+- Limites de FOV: 42° a 82°.
+- Cada notch da roda altera o destino em 4°.
+- O FOV selecionado é persistente e combina-se com a abertura dinâmica de
+  sprint, em vez de esta cancelar o zoom do utilizador.
+- A lente usa uma curva `smootherstep` com aceleração, percurso e travagem.
+- A duração do movimento é obtida diretamente de `AudioStream.get_length()`:
+  aproximadamente 1.384 segundos para os dois sons fornecidos.
+- A lente chega exatamente ao FOV escolhido no clique mecânico final.
+- Scrolls repetidos no mesmo sentido:
+  - atualizam o destino;
+  - usam o tempo restante até ao clique;
+  - não reiniciam nem duplicam o MP3.
+- Inverter o sentido troca corretamente para o outro motor de lente.
+- Um único `AudioStreamPlayer` no bus SFX gere os dois sons.
+
+### Autofocus
+
+- Enquanto os elementos da lente se movem existe apenas uma suavidade ótica
+  mínima.
+- Depois do clique final ocorre um focus hunt curto de 0.30 segundos e a imagem
+  recupera progressivamente a nitidez.
+- O blur foi integrado no shader CRT existente através dos mipmaps da textura
+  de ecrã.
+- Mantêm-se três amostras por pixel; não foi adicionado blur multi-tap pesado.
+- O resultado é suave e não utiliza redução de resolução nem pixelização.
+- Player e overlay comunicam através do sinal local `lens_focus_changed`, sem
+  qualquer tráfego multiplayer.
+
+### Walk e Run
+
+- Walk reforçado:
+  - bob vertical de 0.036 m;
+  - sway lateral de aproximadamente 0.022 m;
+  - roll e pitch de passada aumentados.
+- Run reforçado:
+  - bob vertical de 0.056 m;
+  - sway lateral de 0.035 m;
+  - roll, pitch e micro-tremor mais presentes.
+- Cada heel-strike possui agora pequenas variações de força e duração.
+- Cada passada injeta também impulsos amortecidos laterais e de roll.
+- FastNoiseLite altera lentamente fase e amplitude sem interferir com a deteção
+  real dos passos.
+- A frequência varia entre 91% e 109% por passada, evitando repetição mecânica.
+- As novas forças continuam dentro das camadas contínuas do CX75, pelo que
+  começar a andar não volta a causar snap.
+
+### Validação Automatizada
+
+- Ambos os MP3 foram carregados e reconhecidos com duração aproximada de
+  1.384 segundos.
+- Dois zooms consecutivos no mesmo sentido reutilizaram o mesmo stream.
+- O movimento terminou em FOV `64.00` exatamente no tempo restante do áudio:
+  `1.30 s` após o segundo input realizado durante o primeiro som.
+- Pico de autofocus medido: `0.42`, regressando depois a menos de `0.01`.
+- A inversão de sentido selecionou corretamente o stream zoom out.
+- Passadas físicas confirmaram:
+  - kick lateral superior a `0.004 m`;
+  - variação de frequência superior a 5%.
+- O overlay com o shader atualizado foi instanciado sem erro de shader.
+- Resultado:
+  `CX76_OK fov=64 motor_seconds=1.3 focus_blur=0.42 lateral_kick=0.0047 stride_variation=0.065`.
+
+### Ficheiros desta Edição
+
+- `scripts/player/player_controller.gd`
+- `scripts/ui/overlay.gd`
+- `scripts/world/game_world.gd`
+- `assets/shaders/post_crt_old_tv.gdshader`
+- `assets/audio/sfx/camera/zoom_in.mp3` (fornecido pelo utilizador)
+- `assets/audio/sfx/camera/zoom_out.mp3` (fornecido pelo utilizador)
+- `docs/CODEX_EDIT_LOG.md`
+
+### Tags
+
+`CX76-PHYSICAL-ZOOM`, `CX76-AUDIO-SYNCHRONIZED-LENS`,
+`CX76-CLICK-ENDPOINT`, `CX76-AUTOFOCUS-DELAY`,
+`CX76-NON-PIXELATED-BLUR`, `CX76-STRONGER-FOOTSTEPS`,
+`CX76-ORGANIC-GAIT`.
+
+## Edição CX-2026-07-24-77 — Wet Floor e Respiração Singleplayer
+
+### Problemas Reportados
+
+- A mecânica de escorregar não estava a ativar.
+- A área junto à placa WET FLOOR aparecia como um grande buraco preto.
+- Os sons de respiração não funcionavam em singleplayer.
+
+### Causa do Piso Preto
+
+- O material `_puddle_mat` era quase preto e tinha 42% de opacidade.
+- Esse material não era usado apenas na pequena poça da placa: também cobria
+  caixas de 3.8 x 3.8 m da formação `flooded_lounge`.
+- Essas caixas transparentes ainda podiam projetar uma sombra retangular.
+- A poça procedural tinha raio de 3.5 m dentro de células com apenas 4 m de
+  largura, atravessando paredes e pisos vizinhos.
+
+### Correção Visual
+
+- O filme de água passou a:
+  - alpha 0.14;
+  - cor clara compatível com a carpete;
+  - roughness 0.16;
+  - reflexo/specular moderado;
+  - zero shadow casting.
+- O raio foi reduzido para 1.55 m e a poça recentrada para caber totalmente na
+  célula procedural.
+- A placa foi reposicionada sobre a nova área.
+- A correção aplica-se também ao `flooded_lounge`, eliminando o quadrado preto.
+
+### Correção Física do Wet Floor
+
+- O `Area3D` possui agora:
+  - raio publicado em metadata;
+  - layer 0 e mask 2 para o player;
+  - monitoring explicitamente ativo.
+- Player e Entity leem o mesmo raio do próprio hazard.
+- A distância é calculada apenas no plano horizontal, sem falsos negativos
+  causados por diferenças de altura.
+- O player escorrega se:
+  - o estado de sprint estiver ativo; ou
+  - ainda viajar fisicamente acima de 122% da velocidade de walk no frame em que
+    a stamina termina.
+- O preflight de colisão deixou de considerar o contacto normal com o chão como
+  se fosse uma parede. Paredes reais continuam a reduzir/parar o impulso.
+
+### Causa e Correção da Respiração
+
+- O jumpscare silencia temporariamente todos os buses exceto Master/Jumpscare.
+- Ao terminar, `Settings.apply_all()` restaurava Master, Music e SFX, mas não o
+  bus filho `Breathing`.
+- Esse bus autoload podia permanecer mudo ao entrar ou continuar numa partida
+  singleplayer.
+- Criado `Settings.apply_audio()`:
+  - restaura Master, Music e SFX;
+  - restaura explicitamente o mute do bus Breathing;
+  - mantém o gain desse bus a 0 dB para não aplicar duas vezes o slider SFX.
+- `GameWorld` chama esse restauro antes de criar o player local.
+- O restauro já usado no fim do jumpscare passa automaticamente pelo mesmo
+  caminho corrigido.
+
+### Validação Automatizada
+
+- Simulado bus Breathing preso em mute antes de iniciar o player singleplayer.
+- O restauro confirmou `bus_muted=false`.
+- Estado NORMAL:
+  - stream carregado;
+  - reprodução ativa;
+  - volume final `+23.3 dB`.
+- Hazard procedural:
+  - alpha `0.14`;
+  - raio `1.55`;
+  - material com luminância superior a 0.20;
+  - player a correr ativou `_is_slipping=true`.
+- Resultado:
+  `CX77_OK solo_normal_db=23.3 bus_muted=false puddle_alpha=0.14 radius=1.55 slipping=true`.
+
+### Ficheiros desta Edição
+
+- `scripts/world/maze_manager.gd`
+- `scripts/player/player_controller.gd`
+- `scripts/world/entity_director.gd`
+- `scripts/autoloads/settings.gd`
+- `scripts/world/game_world.gd`
+- `docs/CODEX_EDIT_LOG.md`
+
+### Tags
+
+`CX77-WET-FLOOR-VISUAL-FIX`, `CX77-WET-FLOOR-TRIGGER`,
+`CX77-NO-BLACK-PUDDLE`, `CX77-WALL-SAFE-SLIP`,
+`CX77-SINGLEPLAYER-BREATHING`, `CX77-BREATHING-BUS-RESTORE`.
+

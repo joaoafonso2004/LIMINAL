@@ -22,6 +22,7 @@ func _ready() -> void:
 		_unlocked = true
 	_setup_buses()
 	_create_players()
+	_setup_breathing_processing()
 	_setup_sfx_compressor()
 	_setup_limiter()
 
@@ -35,12 +36,12 @@ func _input(event: InputEvent) -> void:
 			_pending_music = null
 
 func _setup_buses() -> void:
-	for bus_name in ["Music", "SFX"]:
+	for bus_name in ["Music", "SFX", "Breathing"]:
 		if AudioServer.get_bus_index(bus_name) == -1:
 			AudioServer.add_bus()
 			var idx := AudioServer.bus_count - 1
 			AudioServer.set_bus_name(idx, bus_name)
-			AudioServer.set_bus_send(idx, "Master")
+			AudioServer.set_bus_send(idx, "SFX" if bus_name == "Breathing" else "Master")
 
 func _create_players() -> void:
 	music_player = AudioStreamPlayer.new()
@@ -240,6 +241,33 @@ func _setup_sfx_compressor() -> void:
 	compressor.attack_us = 9000.0
 	compressor.release_ms = 180.0
 	AudioServer.add_bus_effect(sfx_idx, compressor)
+
+
+func _setup_breathing_processing() -> void:
+	var breathing_idx := AudioServer.get_bus_index("Breathing")
+	if breathing_idx < 0:
+		return
+	# Rebuild this dedicated chain so repeated editor runs cannot stack effects.
+	while AudioServer.get_bus_effect_count(breathing_idx) > 0:
+		AudioServer.remove_bus_effect(breathing_idx, 0)
+	var high_pass := AudioEffectHighPassFilter.new()
+	# Close-mic breathing derives its physical presence from chest/mouth energy
+	# below 300 Hz. The old cutoff removed almost all of that body.
+	high_pass.cutoff_hz = 65.0
+	AudioServer.add_bus_effect(breathing_idx, high_pass)
+	var low_pass := AudioEffectLowPassFilter.new()
+	# Keep enough air and saliva detail to avoid the old telephone/muffled tone.
+	low_pass.cutoff_hz = 10000.0
+	AudioServer.add_bus_effect(breathing_idx, low_pass)
+	var compressor := AudioEffectCompressor.new()
+	# Firm close-mic compression: intimate and present, without the reference
+	# video's extreme low-frequency blanket.
+	compressor.threshold = -24.0
+	compressor.ratio = 6.0
+	compressor.gain = 4.0
+	compressor.attack_us = 3500.0
+	compressor.release_ms = 170.0
+	AudioServer.add_bus_effect(breathing_idx, compressor)
 
 
 func set_heartbeat_state(state: String) -> void:

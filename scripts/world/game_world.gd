@@ -8,6 +8,7 @@ const OVERLAY_SCRIPT := "res://scripts/ui/overlay.gd"
 const REMOTE_PLAYER_SCRIPT := "res://scripts/world/remote_player.gd"
 
 const HUM_PATH := "res://assets/audio/ambient/ambient_backrooms_office_fluorescent_hum_loop.mp3"
+const VHS_BED_PATH := "res://assets/audio/sfx/environment/VHS_sound.mp3"
 const HVAC_PATH := ""
 # The menu theme, pitched way down, doubles as the deep dark room-tone drone
 # (A24 Backrooms-ambience vibe) — unrecognizable at 0.72x and costs no new asset.
@@ -39,6 +40,7 @@ var _pause: CanvasLayer = null
 var _hum: AudioStreamPlayer = null
 var _hvac: AudioStreamPlayer = null
 var _drone: AudioStreamPlayer = null
+var _vhs_bed: AudioStreamPlayer = null
 
 var _ended := false
 var _final_started := false
@@ -96,6 +98,10 @@ var _crawl_blood_trail_timer := 0.0
 func _ready() -> void:
 	_is_mp = has_node("/root/NetManager") and NetManager.is_multiplayer
 	_run_seed = NetManager.get_run_seed() if has_node("/root/NetManager") else 1
+	# Audio buses are autoload state and survive scene changes. Restore the
+	# dedicated breathing child bus before the solo/local player is constructed.
+	if has_node("/root/Settings") and Settings.has_method("apply_audio"):
+		Settings.apply_audio()
 	# The muffle low-pass lives on the global SFX bus — clear leftovers from a
 	# previous run that ended mid-muffle, or the world stays underwater forever.
 	var sfx_idx := AudioServer.get_bus_index("SFX")
@@ -129,6 +135,12 @@ func _ready() -> void:
 		GameManager.start_run()
 	_last_pos = _player.global_position if is_instance_valid(_player) else Vector3.ZERO
 	_setup_intro_screen()
+
+
+func _exit_tree() -> void:
+	if has_node("/root/VoiceChat"):
+		VoiceChat.clear_remote_players()
+
 
 var _intro_canvas: CanvasLayer = null
 
@@ -195,14 +207,23 @@ func _setup_intro_screen() -> void:
 	vbox.add_child(author)
 	
 	var desc := Label.new()
-	var sprint_hint := "Shift - Sprint" if not _is_mp or bool(NetManager.rule("sprint", true)) else "Sprint disabled by lobby"
+	var sprint_key := Settings.binding_text("sprint") if has_node("/root/Settings") else "Shift"
+	var crouch_key := Settings.binding_text("crouch") if has_node("/root/Settings") else "Ctrl"
+	var interact_key := Settings.binding_text("interact") if has_node("/root/Settings") else "E"
+	var callout_key := Settings.binding_text("callout") if has_node("/root/Settings") else "Q"
+	var sprint_hint := "%s - Sprint" % sprint_key \
+		if not _is_mp or bool(NetManager.rule("sprint", true)) \
+		else "Sprint disabled by lobby"
 	var coop_hint := ""
 	if _is_mp:
-		coop_hint = "\nQ - Scream so nearby teammates can find you"
+		coop_hint = "\n%s - Scream so nearby teammates can find you" % callout_key
+		var voice_key := Settings.binding_text("voice_ptt") \
+			if has_node("/root/Settings") else "V"
+		coop_hint += "\n%s - Proximity voice (push-to-talk)" % voice_key
 		if _separated_spawns_enabled():
 			coop_hint += "\nYou entered apart. Listen before you call out."
 	var emergency_text := "Emergency Buttons" if _is_mp else "Emergency Button"
-	desc.text = "OBJECTIVE:\nFind 5 Snus, locate the %s, then find the door.\n\nCONTROLS:\nWASD - Move | %s | Ctrl/C - Crouch\nE - Interact%s" % [emergency_text, sprint_hint, coop_hint]
+	desc.text = "OBJECTIVE:\nFind 5 Snus, locate the %s, then find the door.\n\nCONTROLS:\nMovement keys - Move | %s | %s - Crouch\n%s - Interact%s" % [emergency_text, sprint_hint, crouch_key, interact_key, coop_hint]
 	desc.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	desc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	desc.add_theme_color_override("font_color", Color(0.85, 0.82, 0.72, 0.9))
@@ -331,7 +352,6 @@ func _spawn_world_content() -> void:
 	add_child(_content)
 	_content.setup(_player, _maze)
 	_content.cassette_collected.connect(_on_cassette_collected)
-	_content.power_restored.connect(_on_aux_power_restored)
 	_content.anomaly_entered.connect(_on_anomaly_sector_entered)
 	_content.anomaly_left.connect(_on_anomaly_sector_left)
 
@@ -381,11 +401,17 @@ func _spawn_entity() -> void:
 	_entity.muffle.connect(_on_muffle)
 	_entity.caught.connect(_on_caught)
 	_entity.victim_jumpscare.connect(_on_victim_jumpscare)
+	_entity.chase_started.connect(_on_chase_started)
 	_entity.chase_ended.connect(_on_chase_ended)
 
 func _spawn_overlay() -> void:
 	_overlay = load(OVERLAY_SCRIPT).new()
 	add_child(_overlay)
+	if _overlay.has_signal("chase_vignette_changed"):
+		_overlay.chase_vignette_changed.connect(_on_red_effect_changed)
+	if is_instance_valid(_player) and _player.has_signal("lens_focus_changed") \
+			and _overlay.has_method("set_lens_focus_blur"):
+		_player.lens_focus_changed.connect(_overlay.set_lens_focus_blur)
 
 func _spawn_pause() -> void:
 	_pause = load("res://scripts/ui/pause_menu.gd").new()
@@ -417,6 +443,7 @@ func _set_current_mission(text: String, show_now: bool = false) -> void:
 const HUM_VOL := -12.0
 const HVAC_VOL := -20.0
 const DRONE_VOL := -16.0
+const VHS_BED_VOL := -32.0
 const HUM_PITCH := 0.92                # darker, heavier mains hum
 const HUM_PITCH_MUFFLED := 0.78        # drops further when something unseen is near
 const DRONE_PITCH := 0.72              # menu theme slowed into a deep room-tone
@@ -436,12 +463,17 @@ func _setup_ambient() -> void:
 	_drone = _make_loop(DRONE_PATH, DRONE_VOL)
 	if _drone:
 		_drone.pitch_scale = DRONE_PITCH
+	# Barely audible transport noise gives the camera a physical tape presence.
+	_vhs_bed = _make_loop(VHS_BED_PATH, VHS_BED_VOL)
 
 ## Cut the ambient bed to near-silence, hold, then let it breathe back in.
 func _duck_ambient(attack: float, hold: float, release: float) -> void:
 	var layers: Array = []
 	var vols: Array = []
-	for pair in [[_hum, HUM_VOL], [_hvac, HVAC_VOL], [_drone, DRONE_VOL]]:
+	for pair in [
+		[_hum, HUM_VOL], [_hvac, HVAC_VOL], [_drone, DRONE_VOL],
+		[_vhs_bed, VHS_BED_VOL],
+	]:
 		if pair[0] != null:
 			layers.append(pair[0])
 			vols.append(pair[1])
@@ -540,7 +572,7 @@ func _tick_downed_and_revive(delta: float) -> void:
 	if _is_downed:
 		_incoming_revive_timeout = maxf(0.0, _incoming_revive_timeout - delta)
 		if _incoming_revive_timeout > 0.0:
-			# Revive in progress: PAUSE the 30-second bleedout timer!
+			# Revive in progress: pause the rules-driven bleedout timer.
 			_set_revive_progress(_incoming_revive_progress, true)
 		else:
 			_incoming_revive_progress = 0.0
@@ -571,7 +603,7 @@ func _tick_downed_and_revive(delta: float) -> void:
 			_downed_bar.value = maxf(0.0, _bleedout_timer)
 			
 		if _bleedout_timer <= 0.0:
-			# Bleedout expired after 30s -> PERMANENTLY DEAD, CANNOT BE REVIVED!
+			# Bleedout expired -> permanently dead and no longer revivable.
 			_is_downed = false
 			_local_is_down = true
 			if is_instance_valid(_player):
@@ -711,7 +743,8 @@ func _tick_callout(delta: float) -> void:
 		_play_callout(pos, NetManager.local_player_id if _is_mp else 0, _is_downed)
 		if _is_mp:
 			NetManager.send("callout", {"x": pos.x, "y": pos.y, "z": pos.z, "downed": _is_downed})
-		if not _is_downed and _entity and _entity.has_method("investigate_noise"):
+		if not _is_downed and (not _is_mp or NetManager.is_host) \
+				and _entity and _entity.has_method("investigate_noise"):
 			_entity.investigate_noise(pos, Tuning.COOP_CALLOUT_ENTITY_RANGE, "callout")
 
 func _play_callout(world_position: Vector3, player_id: int, downed: bool = false) -> void:
@@ -747,9 +780,21 @@ func _on_jumpscare() -> void:
 	# the ONLY sanctioned absolute silence: right after the scream
 	_duck_ambient(0.2, 2.4, 3.0)
 
+func _on_chase_started() -> void:
+	if is_instance_valid(_player) and _player.has_method("set_being_chased"):
+		_player.set_being_chased(true)
+
+
 func _on_chase_ended() -> void:
+	if is_instance_valid(_player) and _player.has_method("set_being_chased"):
+		_player.set_being_chased(false)
 	# it vanished — hard cut, a beat of dead air, then the hum seeps back
 	_duck_ambient(0.05, 1.2, 2.5)
+
+func _on_red_effect_changed(active: bool) -> void:
+	if is_instance_valid(_player) and _player.has_method("set_red_effect_active"):
+		_player.set_red_effect_active(active)
+
 
 func _on_muffle(active: bool) -> void:
 	_muffled = active
@@ -773,6 +818,8 @@ func _on_muffle(active: bool) -> void:
 		AudioServer.remove_bus_effect(idx, low_pass_index)
 
 func _on_caught() -> void:
+	if is_instance_valid(_player) and _player.has_method("set_being_chased"):
+		_player.set_being_chased(false)
 	if _is_mp:
 		# In co-op, being caught takes only you out — tell the others and
 		# spectate rather than restarting everyone's run.
@@ -911,7 +958,10 @@ func _update_emergency_mission(show_now: bool = false) -> void:
 	var armed := int(_extraction.get_armed_count()) if _extraction and _extraction.has_method("get_armed_count") else 0
 	var total := int(_extraction.get_total_buttons()) if _extraction and _extraction.has_method("get_total_buttons") else (2 if _is_mp else 1)
 	var noun := "Emergency Buttons" if _is_mp else "Emergency Button"
-	_set_current_mission("Locate the %s %d/%d" % [noun, armed, total], show_now)
+	var mission := "Locate the %s %d/%d" % [noun, armed, total]
+	if _is_mp and armed > 0 and _extraction.has_method("get_window_left"):
+		mission += " — %.0fs" % float(_extraction.get_window_left())
+	_set_current_mission(mission, show_now)
 
 func _spawn_snus_ui() -> void:
 	_snus_ui = load("res://scripts/ui/snus_hud.gd").new()
@@ -938,6 +988,8 @@ func _spawn_remote_players() -> void:
 		add_child(rp)
 		rp.global_position = _run_spawn_position(pid)
 		_remote_players[pid] = rp
+		if has_node("/root/VoiceChat"):
+			VoiceChat.register_remote_player(pid, rp)
 		if _snus and _snus.has_method("register_player_body"):
 			_snus.register_player_body(rp)
 
@@ -1030,6 +1082,7 @@ func _broadcast_position() -> void:
 		"pitch": _camera.rotation.x if is_instance_valid(_camera) else 0.0,
 		"spr": bool(_player.is_sprinting) if "is_sprinting" in _player else false,
 		"cr": bool(_player.is_crouching) if "is_crouching" in _player else false,
+		"sl": bool(_player.get("_is_slipping")),
 		"mx": animation_move.x,
 		"mz": animation_move.y,
 	})
@@ -1114,14 +1167,12 @@ func _on_net_message(type: String, msg: Dictionary, from_player: int) -> void:
 			var vhs_tv = find_child("VHSTV", true, false)
 			if is_instance_valid(vhs_tv) and vhs_tv.has_method("set_playing"):
 				vhs_tv.set_playing(is_play)
-		"aux_power":
-			if _content and _content.has_method("remote_restore_power"):
-				_receiving_shared_content = true
-				_content.remote_restore_power()
-				_receiving_shared_content = false
 		"extract_terminal":
 			if _extraction and _extraction.has_method("remote_activate"):
-				_extraction.remote_activate(int(msg.get("id", -1)))
+				var terminal_id := int(msg.get("id", -1))
+				_extraction.remote_activate(terminal_id)
+				if NetManager.is_host and sender_id != NetManager.local_player_id:
+					_alert_entity_to_emergency_button(terminal_id)
 				_update_emergency_mission(true)
 		"extract_activate":
 			if int(msg.get("from", from_player)) == 0:
@@ -1152,13 +1203,16 @@ func _on_net_message(type: String, msg: Dictionary, from_player: int) -> void:
 				_incoming_revive_progress = clampf(float(msg.get("prog", 0.0)), 0.0, 10.0)
 				_incoming_revive_timeout = 0.35
 		"callout":
+			if int(msg.get("from", from_player)) == NetManager.local_player_id:
+				return
 			var callout_position := Vector3(
 				float(msg.get("x", 0.0)),
 				float(msg.get("y", 0.0)),
 				float(msg.get("z", 0.0)))
 			var caller_is_downed := bool(msg.get("downed", false))
 			_play_callout(callout_position, sender_id, caller_is_downed)
-			if not caller_is_downed and _entity and _entity.has_method("investigate_noise"):
+			if NetManager.is_host and not caller_is_downed \
+					and _entity and _entity.has_method("investigate_noise"):
 				_entity.investigate_noise(callout_position, Tuning.COOP_CALLOUT_ENTITY_RANGE, "callout")
 		"player_noise":
 			if NetManager.is_host and sender_id >= 0 and not _remote_down.has(sender_id) \
@@ -1234,11 +1288,6 @@ func _on_net_message(type: String, msg: Dictionary, from_player: int) -> void:
 			if sender_id == 0 and int(msg.get("target", -1)) == NetManager.local_player_id \
 					and _entity and _entity.has_method("remote_stalk_caught"):
 				_entity.remote_stalk_caught()
-		"phone_chase":
-			var p_pos := Vector3(float(msg.get("x", 0)), 0, float(msg.get("z", 0)))
-			if _entity and _entity.has_method("phone_chase"):
-				_entity.phone_chase(p_pos)
-
 func _resolve_sender_id(msg: Dictionary, from_player: int) -> int:
 	if _remote_players.has(from_player):
 		return from_player
@@ -1248,6 +1297,8 @@ func _resolve_sender_id(msg: Dictionary, from_player: int) -> int:
 	return -1
 
 func _on_player_disconnected(pid: int) -> void:
+	if has_node("/root/VoiceChat"):
+		VoiceChat.unregister_remote_player(pid)
 	var rp = _remote_players.get(pid)
 	if is_instance_valid(rp):
 		rp.queue_free()
@@ -1271,12 +1322,13 @@ func _local_down() -> void:
 			_enter_dead_spectator()
 			_check_all_down()
 			return
-		# Co-op: enter 30-second Downed Bleedout state where player can crawl and scream.
+		# Co-op: enter the rules-driven Downed Bleedout state (90 s on Normal)
+		# where the player can crawl and scream.
 		# The entity ignores us (no catch) but keeps roaming — it flees, doesn't despawn.
 		if _entity and _entity.has_method("set_local_player_targetable"):
 			_entity.set_local_player_targetable(false, true)
 		_is_downed = true
-		_bleedout_timer = float(NetManager.rule("revive_seconds", 30.0))
+		_bleedout_timer = float(NetManager.rule("revive_seconds", 90.0))
 		_crawl_blood_trail_timer = 0.0
 		NetManager.send("downed", {})
 		if is_instance_valid(_player):
@@ -2065,18 +2117,34 @@ func _activate_phone(phone: Node3D, target_id: int, broadcast: bool) -> void:
 		if not is_instance_valid(phone) or not has_node("/root/AudioManager"):
 			return
 		var is_target := not _is_mp or target_id == NetManager.local_player_id
-		if fate == "trap" and is_target:
-			var breath_stream = load("res://assets/audio/juanjo/juanjo_sound - Backrooms Entity 23.wav")
-			AudioManager.play_sfx_3d(self, breath_stream, phone.global_position, -5.0, 16.0, 0.88)
-			if _phone_scare_cd <= 0.0:
+		if fate == "trap":
+			if is_target:
+				var breath_stream = load("res://assets/audio/juanjo/juanjo_sound - Backrooms Entity 23.wav")
+				AudioManager.play_sfx_3d(self, breath_stream, phone.global_position, -5.0, 16.0, 0.88)
+				if _snus_ui and _snus_ui.has_method("announce"):
+					_snus_ui.announce("THE LINE HEARD YOU", 4.0)
+			# Only the host moves the shared Entity. The telephone is a loud
+			# location to investigate, never a supernatural lock-on to whoever
+			# picked up the receiver.
+			if (not _is_mp or NetManager.is_host) and _phone_scare_cd <= 0.0:
 				_phone_scare_cd = Tuning.PHONE_TRAP_COOLDOWN
-				if _entity and _entity.has_method("phone_chase"):
-					_entity.phone_chase(phone.global_position)
+				if _entity and _entity.has_method("investigate_noise"):
+					_entity.investigate_noise(
+						phone.global_position, 36.0, "phone")
 		elif fate == "radar" and is_target:
-			var objective_count: int = int(_snus.get_collected()) if _snus else 0
-			_radar_pings_left = 2 if objective_count < 2 else Tuning.PHONE_RADAR_PINGS
-			_radar_timer = Tuning.PHONE_RADAR_PING_MAX_GAP * float(_radar_pings_left)
-			_radar_ping_cd = 0.05
+			var guidance := _phone_guidance_target()
+			if guidance.is_empty():
+				if _snus_ui and _snus_ui.has_method("announce"):
+					_snus_ui.announce("ONLY STATIC ANSWERS", 3.0)
+			else:
+				if _snus_ui and _snus_ui.has_method("announce"):
+					_snus_ui.announce(
+						"THE LINE POINTS TO %s — LISTEN" % guidance["label"],
+						4.5)
+				_radar_pings_left = Tuning.PHONE_RADAR_PINGS
+				_radar_timer = Tuning.PHONE_RADAR_PING_MAX_GAP \
+					* float(_radar_pings_left)
+				_radar_ping_cd = 0.05
 
 		get_tree().create_timer(1.8).timeout.connect(func():
 			if is_instance_valid(phone):
@@ -2120,14 +2188,39 @@ func _play_distant_laugh() -> void:
 		)
 
 
+func _phone_guidance_target() -> Dictionary:
+	if not is_instance_valid(_player):
+		return {}
+	if not _snus_done and _snus \
+			and _snus.has_method("get_nearest_uncollected_pos"):
+		var snus_position: Vector3 = _snus.get_nearest_uncollected_pos(
+			_player.global_position)
+		if snus_position != Vector3.ZERO:
+			return {"position": snus_position, "label": "THE NEAREST TIN"}
+	if _extraction and _extraction.has_method("is_ready") \
+			and not _extraction.is_ready() \
+			and _extraction.has_method("get_nearest_unarmed_position"):
+		var button_position: Vector3 = _extraction.get_nearest_unarmed_position(
+			_player.global_position)
+		if button_position != Vector3.ZERO:
+			return {
+				"position": button_position,
+				"label": "THE NEXT EMERGENCY BUTTON",
+			}
+	if _maze and _maze.has_method("exit_door_position"):
+		var exit_position: Vector3 = _maze.exit_door_position()
+		if exit_position != Vector3.ZERO:
+			return {"position": exit_position, "label": "THE EXIT"}
+	return {}
+
+
 func _play_radar_ping() -> void:
 	if not is_instance_valid(_player) or not has_node("/root/AudioManager"):
 		return
-	var nearest_pos := Vector3.ZERO
-	if _snus and _snus.has_method("get_nearest_uncollected_pos"):
-		nearest_pos = _snus.get_nearest_uncollected_pos(_player.global_position)
+	var guidance := _phone_guidance_target()
+	var nearest_pos: Vector3 = guidance.get("position", Vector3.ZERO)
 	if nearest_pos == Vector3.ZERO:
-		_radar_timer = 0.0  # no tins left, shut off radar
+		_radar_timer = 0.0
 		_radar_pings_left = 0
 		return
 	if _radar_pings_left <= 0:
@@ -2234,7 +2327,7 @@ func _update_interact_prompt(delta: float) -> void:
 							if _snus and _snus.get_collected() < 1:
 								target_text = "DEAD LINE — FIND A SIGNAL"
 							else:
-								target_text = "ANSWER TELEPHONE"
+								target_text = "ANSWER TELEPHONE — RISK THE CALL"
 							in_range = true
 						
 	# CX31 — the one real door. It now stands in the world from the first second,
@@ -2287,14 +2380,32 @@ func _on_cassette_collected() -> void:
 func _on_extraction_terminal_activated(terminal_id: int) -> void:
 	if _is_mp:
 		NetManager.send("extract_terminal", {"id": terminal_id})
+	if not _is_mp or NetManager.is_host:
+		_alert_entity_to_emergency_button(terminal_id)
 	if _snus_ui and _snus_ui.has_method("announce"):
 		if _is_mp:
-			_snus_ui.announce("EMERGENCY BUTTON %d ACTIVE" % (terminal_id + 1), 4.0)
+			_snus_ui.announce(
+				"BUTTON %d ACTIVE — 45 SECONDS" % (terminal_id + 1), 4.5)
 		else:
 			_snus_ui.announce("EMERGENCY BUTTON ACTIVE", 4.0)
 	if _overlay and _overlay.has_method("flash"):
 		_overlay.flash(Color(0.12, 0.9, 0.32, 0.24), 0.45)
 	_update_emergency_mission(true)
+
+func _alert_entity_to_emergency_button(terminal_id: int) -> void:
+	if not _extraction or not _extraction.has_method("get_station_position"):
+		return
+	var alarm_position: Vector3 = _extraction.get_station_position(terminal_id)
+	if alarm_position == Vector3.ZERO:
+		return
+	if _entity and _entity.has_method("investigate_noise"):
+		_entity.investigate_noise(alarm_position, 34.0, "alarm")
+	if _maze and _maze.has_method("set_flicker"):
+		_maze.set_flicker(0.55)
+		get_tree().create_timer(0.9).timeout.connect(func() -> void:
+			if is_instance_valid(_maze) and _maze.has_method("set_flicker"):
+				_maze.set_flicker(0.0)
+		)
 
 func _on_extraction_window_reset() -> void:
 	if _is_mp:
@@ -2322,19 +2433,6 @@ func _on_extraction_ready() -> void:
 	if _overlay and _overlay.has_method("pulse"):
 		_overlay.pulse(1.8)
 	_set_current_mission("Locate the door", true)
-
-func _on_aux_power_restored(center: Vector2i) -> void:
-	if _snus_ui and _snus_ui.has_method("announce"):
-		_snus_ui.announce("AUXILIARY LIGHTS RESTORED — SOMETHING HEARD IT", 5.0)
-	if _entity and _entity.has_method("calm_down"):
-		_entity.calm_down(0.35)
-	if _entity and _entity.has_method("investigate_noise"):
-		_entity.investigate_noise(Vector3(center.x * 4.0, 1.0, center.y * 4.0), 42.0, "breaker")
-	if has_node("/root/AudioManager"):
-		var power_sound = load("res://assets/audio/sfx/pickup/pickup_escape_unlocked.mp3")
-		AudioManager.play_sfx_3d(self, power_sound, Vector3(center.x * 4.0, 1.0, center.y * 4.0), -5.0, 45.0, 0.8)
-	if _is_mp and not _receiving_shared_content:
-		NetManager.send("aux_power", {})
 
 func _on_anomaly_sector_entered(kind: String, center: Vector2i) -> void:
 	match kind:

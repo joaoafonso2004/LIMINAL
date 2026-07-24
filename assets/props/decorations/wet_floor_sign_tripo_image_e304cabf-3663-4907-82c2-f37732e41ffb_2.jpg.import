@@ -9,7 +9,7 @@ metadata={
 "vram_texture": true
 }
 generator_parameters={
-"md5": "4781a5372f8b47c359ed8356abb782e1"
+"md5": "938e909edbaec5b87f9a3bed0692390b"
 }
 
 [deps]
@@ -22,8 +22,6 @@ dest_files=["res://.godot/imported/wet_floor_sign_tripo_image_e304cabf-3663-4907
 compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.75
-compress/uastc_level=0
-compress/rdo_quality_loss=0.0
 compress/hdr_compression=1
 compress/normal_map=1
 compress/channel_pack=0
@@ -31,10 +29,6 @@ mipmaps/generate=true
 mipmaps/limit=-1
 roughness/mode=1
 roughness/src_normal="res://assets/props/decorations/wet_floor_sign_tripo_image_e304cabf-3663-4907-82c2-f37732e41ffb_2.jpg"
-process/channel_remap/red=0
-process/channel_remap/green=1
-process/channel_remap/blue=2
-process/channel_remap/alpha=3
 process/fix_alpha_border=true
 process/premult_alpha=false
 process/normal_map_invert_y=false

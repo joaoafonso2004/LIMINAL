@@ -59,6 +59,7 @@ const NEW_ENTITY_ANIMATION_SOURCES := {
 	# peek falls back to `idle` plus the procedural head/neck override.
 	"peek_right": "res://assets/characters/entity/new_entity_peak_right_shoulder.fbx",
 	"peek_left": "res://assets/characters/entity/new_entity_peak_left_shoulder.fbx",
+	"entity_slip_getup": "res://assets/characters/entity/entity_slip_getup.fbx",
 	"entity_attack": "res://assets/characters/survivor_body/entity_attack.fbx",
 	"entity_eat_start": "res://assets/characters/survivor_body/entity_eat_start.fbx",
 	"entity_eat_loop": "res://assets/characters/survivor_body/entity_eat_loop.fbx",
@@ -149,13 +150,16 @@ var _lean_dir := 1.0                   # 1 leaning out, -1 sliding back
 var _jump_prev_fov := 72.0             # camera fov to restore after the scare
 var _is_stumbling := false
 var _wet_floor_stumble_timer := 0.0
+var _wet_floor_rearm_timer := 0.0
+var _last_wet_floor_id := 0
 
 func slip_and_stumble(duration: float = 2.0) -> void:
 	if _is_stumbling or _catch_in_progress:
 		return
 	_is_stumbling = true
-	var actual_duration := duration
-	
+	_wet_floor_stumble_timer = maxf(duration, 0.1)
+	_prepare_stumble_clearance()
+
 	if is_instance_valid(_fig_anim):
 		var clips := ["entity_slip_getup", "slip_and_getup", "stumble_recover", "entity_stumble", "entity_slip", "stumble", "slip", "fall", "crawl"]
 		var found_clip := ""
@@ -165,31 +169,55 @@ func slip_and_stumble(duration: float = 2.0) -> void:
 				break
 		if found_clip != "":
 			_fig_anim.play(found_clip, 0.2)
-			actual_duration = maxf(1.0, _fig_anim.get_animation(found_clip).length)
-		elif is_instance_valid(_figure):
-			_figure.rotation.x = deg_to_rad(40.0)
-			_figure.position.y -= 0.5
-	elif is_instance_valid(_figure):
-		_figure.rotation.x = deg_to_rad(40.0)
-		_figure.position.y -= 0.5
-	
-	_wet_floor_stumble_timer = actual_duration
+			var clip := _fig_anim.get_animation(found_clip)
+			if clip != null:
+				# Preserve the requested two-second gameplay opening regardless of
+				# the source FBX take length.
+				_fig_anim.speed_scale = clip.length / _wet_floor_stumble_timer
+		else:
+			_apply_wet_floor_fallback_pose(true)
+	else:
+		_apply_wet_floor_fallback_pose(true)
 
 	if has_node("/root/AudioManager"):
-		var splash_sfx = load("res://assets/audio/sfx/environment/environment_light_flicker_buzz.mp3")
-		AudioManager.play_sfx_3d(self, splash_sfx, _figure.global_position if is_instance_valid(_figure) else global_position, 2.0, 20.0)
+		var impact_sfx: AudioStream = _sfx.get("heavy_steps")
+		if impact_sfx != null:
+			AudioManager.play_sfx_3d(
+				self, impact_sfx,
+				_figure.global_position if is_instance_valid(_figure) else global_position,
+				-3.0, 20.0, 0.72)
 
-	get_tree().create_timer(actual_duration).timeout.connect(func():
-		_is_stumbling = false
-		if is_instance_valid(_fig_anim):
-			var getup_clips := ["entity_get_up", "entity_recover", "get_up", "idle", "walk"]
-			for gc in getup_clips:
-				if _fig_anim.has_animation(gc) and _fig_anim.current_animation != gc:
-					_fig_anim.play(gc, 0.2)
-					break
-		if is_instance_valid(_figure):
-			_figure.rotation.x = 0.0
-	)
+
+func _apply_wet_floor_fallback_pose(active: bool) -> void:
+	if not is_instance_valid(_figure) or _figure.get_child_count() == 0:
+		return
+	var model := _figure.get_child(0) as Node3D
+	if not is_instance_valid(model):
+		return
+	if active:
+		if not model.has_meta("wet_floor_origin_position"):
+			model.set_meta("wet_floor_origin_position", model.position)
+			model.set_meta("wet_floor_origin_rotation", model.rotation)
+		model.rotation.x = deg_to_rad(40.0)
+		model.position.y -= 0.5
+	elif model.has_meta("wet_floor_origin_position"):
+		model.position = Vector3(model.get_meta("wet_floor_origin_position"))
+		model.rotation = Vector3(model.get_meta("wet_floor_origin_rotation"))
+		model.remove_meta("wet_floor_origin_position")
+		model.remove_meta("wet_floor_origin_rotation")
+
+
+func _finish_wet_floor_stumble() -> void:
+	_is_stumbling = false
+	_wet_floor_rearm_timer = 2.5
+	_apply_wet_floor_fallback_pose(false)
+	if is_instance_valid(_fig_anim):
+		_fig_anim.speed_scale = 1.0
+		var recovery_clip := "run" if _using_new_entity else "ual1_Sprint"
+		if not _fig_anim.has_animation(recovery_clip):
+			recovery_clip = "walk"
+		if _fig_anim.has_animation(recovery_clip):
+			_fig_anim.play(recovery_clip, 0.18)
 
 # "being watched" layer
 var _peek_style := "stare"             # stare: holds your gaze a beat, THEN slips
@@ -299,6 +327,7 @@ var _path_fail := 0.0                  # seconds spent with no route to the play
 var _chase_steps: AudioStreamPlayer3D = null
 var _chase_scream: AudioStreamPlayer3D = null
 var _figure_collision_shape: CapsuleShape3D = null
+var _stumble_clearance_shape: CapsuleShape3D = null
 var _apparition_collision_shape: CapsuleShape3D = null
 ## CX36 — true while an authored peek_left/peek_right clip is driving the lean,
 ## which disables the procedural head/neck stand-in.
@@ -443,13 +472,13 @@ func investigate_noise(world_position: Vector3, audible_range: float, kind: Stri
 	if kind == "sprint":
 		_add_stress(0.012)
 		_sound_pressure = minf(1.0, _sound_pressure + 0.025)
-	elif kind == "callout":
+	elif kind in ["callout", "alarm", "phone"]:
 		_add_stress(0.02)
-		_sound_pressure = minf(1.0, _sound_pressure + 0.06)
-		# A shout in the dark rouses a dormant entity: it comes WANDERING toward
-		# the sound (never a chase from nothing — the maze still has to lead it
-		# into view). Only the director spawns/steers the shared figure; co-op
-		# clients merely mirror whatever the host broadcasts.
+		_sound_pressure = minf(
+			1.0, _sound_pressure + (0.1 if kind == "alarm" else 0.06))
+		# A shout, alarm or telephone rouses a dormant Entity. It wanders toward
+		# the sound and attacks the first player its eyes actually find. Only the
+		# host/director steers the shared physical figure.
 		if _physical_spawn_allowed() and (not _mp or _mp_host) \
 				and (_mode == "idle" or _mode == "roam") \
 				and (is_instance_valid(_figure) or not _shared_chase_active()):
@@ -467,7 +496,8 @@ func investigate_noise(world_position: Vector3, audible_range: float, kind: Stri
 		"roam":
 			var direct_d := _figure.global_position.distance_to(world_position)
 			# Normal walking does not redirect the wanderer unless sprinting, shouting or extremely close (< 3m).
-			if kind in ["sprint", "callout", "breaker"] or direct_d < 3.0:
+			if kind in ["sprint", "callout", "alarm", "phone"] \
+					or direct_d < 3.0:
 				var dest_cell := _cell_of(world_position)
 				_roam_target = _maze.world_center(dest_cell) if (_maze and _maze.has_method("world_center")) else world_position
 				if _maze and _maze.has_method("corridor_path"):
@@ -1153,35 +1183,6 @@ func _shared_entity_on_screen() -> bool:
 		return true
 	return false
 
-## A trapped phone answered — the entity takes the call. Player-initiated,
-## A trapped phone answered — the entity roars and charges straight towards the telephone!
-func phone_chase(phone_pos: Vector3) -> void:
-	if _ended or not _local_targetable or not _physical_spawn_allowed():
-		return
-	if _apparition_mode != "":
-		_end_apparition()
-	_mode = "chase"
-	_chase_state = "windup"
-	_windup_timer = 0.6
-	_chase_done += 1
-	_windup_spot = _find_chase_spawn()
-	if _windup_spot == Vector3.INF:
-		var eye := _camera.global_position if is_instance_valid(_camera) else _player.global_position
-		_windup_spot = eye + Vector3(8.0, 0, 8.0)
-	chase_started.emit()
-	var ov_start := _get_overlay()
-	if is_instance_valid(ov_start) and ov_start.has_method("set_chase_vignette"):
-		ov_start.set_chase_vignette(true)
-	request_flicker.emit(0.5)
-	if has_node("/root/AudioManager") and _sfx.has("chase_scream"):
-		AudioManager.play_sfx_3d(self, _sfx["chase_scream"], _windup_spot + Vector3(0, 1.5, 0), -3.0, 50.0, 0.9)
-
-func phone_jumpscare() -> void:
-	if _ended or not _local_targetable or _mode != "idle" \
-			or not _physical_spawn_allowed():
-		return
-	_begin_jump(_now())
-
 ## A scare order from the host, realized with OUR camera and OUR maze rays.
 func remote_scare(kind: String, data: Dictionary = {}) -> void:
 	if _ended or not _local_targetable:
@@ -1836,16 +1837,31 @@ func _tick_chase(delta: float) -> void:
 	if _is_stumbling:
 		_wet_floor_stumble_timer -= delta
 		if _wet_floor_stumble_timer <= 0.0:
-			_is_stumbling = false
+			_finish_wet_floor_stumble()
 		return
 
-	# Check wet floor hazard slip during sprint chase
-	for area in get_tree().get_nodes_in_group("wet_floor"):
-		if is_instance_valid(area) and area.global_position.distance_to(_figure.global_position) < 2.4:
-			slip_and_stumble(2.0)
-			if _mp:
-				NetManager.send("entity_slip", {"x": _figure.global_position.x, "y": _figure.global_position.y, "z": _figure.global_position.z})
-			return
+	_wet_floor_rearm_timer = maxf(0.0, _wet_floor_rearm_timer - delta)
+	# Only the peer currently simulating the physical chase evaluates hazards;
+	# the stumble flag is carried by the regular figure snapshots below.
+	if _wet_floor_rearm_timer <= 0.0:
+		var touching_wet_floor := false
+		for area in get_tree().get_nodes_in_group("wet_floor"):
+			if not is_instance_valid(area):
+				continue
+			var area_id := area.get_instance_id()
+			var wet_radius := maxf(
+				float(area.get_meta("wet_floor_radius", 1.55)), 0.1)
+			var wet_offset: Vector3 = area.global_position - _figure.global_position
+			if Vector2(wet_offset.x, wet_offset.z).length_squared() \
+					> wet_radius * wet_radius:
+				continue
+			touching_wet_floor = true
+			if area_id != _last_wet_floor_id:
+				_last_wet_floor_id = area_id
+				slip_and_stumble(2.0)
+				return
+		if not touching_wet_floor:
+			_last_wet_floor_id = 0
 
 	_chase_time += delta
 	var to: Vector3 = _player.global_position - _figure.global_position
@@ -3432,6 +3448,7 @@ func _net_fig_tick(delta: float) -> void:
 				"a": _replicated_execution_clip,
 				"ap": animation_phase,
 				"as": animation_speed,
+				"wet": _is_stumbling,
 			})
 	elif _owns_fig:
 		_owns_fig = false
@@ -3487,6 +3504,9 @@ func mirror_update(d: Dictionary) -> void:
 		var mirror_moving := bool(d.get("mv", true))
 		var forced_anim := str(d.get("a", _replicated_execution_clip))
 		var anim := forced_anim
+		var mirror_wet_floor_stumble := bool(d.get("wet", false))
+		if mirror_wet_floor_stumble and _mirror_anim.has_animation("entity_slip_getup"):
+			anim = "entity_slip_getup"
 		if anim == "":
 			if _using_new_entity:
 				if m == "chase":
@@ -3739,6 +3759,62 @@ func _ray_clear(from: Vector3, to: Vector3) -> bool:
 	return _ray_hit(from, to).is_empty()
 
 
+## The Entity stops translating for the complete wet-floor animation, but the
+## authored kneel/fall is wider than its normal upright locomotion capsule. Move
+## it only by the smallest collision-checked offset needed to reserve that
+## animation space; this prevents limbs/torso clipping into a nearby wall.
+func _prepare_stumble_clearance() -> void:
+	if not is_instance_valid(_figure) or _stumble_pose_clear(_figure.global_position):
+		return
+	var origin := _figure.global_position
+	var local_forward := -_figure.global_transform.basis.z
+	local_forward.y = 0.0
+	local_forward = local_forward.normalized()
+	var local_right := _figure.global_transform.basis.x
+	local_right.y = 0.0
+	local_right = local_right.normalized()
+	var directions: Array[Vector3] = [
+		-local_forward, local_right, -local_right, local_forward,
+		(-local_forward + local_right).normalized(),
+		(-local_forward - local_right).normalized(),
+		(local_forward + local_right).normalized(),
+		(local_forward - local_right).normalized(),
+	]
+	for distance in [0.25, 0.5, 0.75]:
+		for direction in directions:
+			var candidate := origin + direction * float(distance)
+			if _figure_lane_clear(origin, candidate) \
+					and _stumble_pose_clear(candidate):
+				_figure.global_position = candidate
+				return
+
+
+func _stumble_pose_clear(pos: Vector3) -> bool:
+	if _stumble_clearance_shape == null:
+		_stumble_clearance_shape = CapsuleShape3D.new()
+		_stumble_clearance_shape.radius = 0.62
+		_stumble_clearance_shape.height = 2.5
+	var query := PhysicsShapeQueryParameters3D.new()
+	query.shape = _stumble_clearance_shape
+	query.transform = Transform3D(Basis.IDENTITY, pos + Vector3(0, 1.28, 0))
+	query.collision_mask = 1
+	query.collide_with_areas = false
+	query.collide_with_bodies = true
+	var exclude_rids: Array[RID] = []
+	if is_instance_valid(_player):
+		exclude_rids.append(_player.get_rid())
+	if _world != null and _world.has_method("living_remote_player_bodies"):
+		var remote_bodies = _world.living_remote_player_bodies()
+		var values: Array = remote_bodies.values() \
+			if remote_bodies is Dictionary else remote_bodies
+		for raw_body in values:
+			var remote_body := raw_body as CollisionObject3D
+			if is_instance_valid(remote_body):
+				exclude_rids.append(remote_body.get_rid())
+	query.exclude = exclude_rids
+	return get_world_3d().direct_space_state.intersect_shape(query, 1).is_empty()
+
+
 ## A centre LOS ray is insufficient for this 2.7 m body. Direct pursuit is
 ## allowed only when its full width is clear at leg, torso and head height.
 func _figure_lane_clear(from: Vector3, to: Vector3) -> bool:
@@ -3774,11 +3850,13 @@ func _figure_pose_clear(pos: Vector3) -> bool:
 	if is_instance_valid(_player):
 		exclude_rids.append(_player.get_rid())
 	if _world != null and _world.has_method("living_remote_player_bodies"):
-		var bodies: Array = _world.living_remote_player_bodies()
-		for body in bodies:
-			var b := body as Node3D
-			if is_instance_valid(b):
-				exclude_rids.append(b.get_rid())
+		var remote_bodies = _world.living_remote_player_bodies()
+		var values: Array = remote_bodies.values() \
+			if remote_bodies is Dictionary else remote_bodies
+		for raw_body in values:
+			var body := raw_body as CollisionObject3D
+			if is_instance_valid(body):
+				exclude_rids.append(body.get_rid())
 	query.exclude = exclude_rids
 	return get_world_3d().direct_space_state.intersect_shape(query, 1).is_empty()
 
